@@ -9,8 +9,6 @@
 
 ## Decisiones de diseño
 
-*(Las decisiones se documentarán aquí a medida que se tomen durante las fases de desarrollo.)*
-
 ---
 
 ### 2026-05-22 — Fase 0: Setup
@@ -48,3 +46,35 @@
 - **Justificación:** La escala está balanceada para que rescatar una víctima (el objetivo principal) domine claramente sobre moverse (+100 vs. -1 por paso → el agente tolera hasta 100 pasos de búsqueda por víctima). La penalización por muerte (-50) es menor que rescatar (+100) para que el agente prefiera arriesgarse si la probabilidad de éxito es alta. El bonus de exploración (+5) decae con el tiempo para forzar explotación en episodios avanzados.
 
 - **Referencia:** Sutton & Barto, "Reinforcement Learning: An Introduction", 2ª ed., cap. 3 (reward shaping).
+
+---
+
+### 2026-05-22 — Fase 1: Render en Canvas 2D, no SVG
+
+**Decisión:** Usar Canvas 2D nativo para todas las capas del mapa.
+
+- **Alternativas consideradas:**
+  - SVG: más fácil de estilizar con CSS, pero con performance degradada en grids >15×15 con animación (cada celda es un nodo DOM).
+  - Canvas 2D (elegido): una sola superficie de dibujo, redraw completo en cada frame, O(n) donde n = celdas visibles.
+  - WebGL: exceso de complejidad para el scope del proyecto.
+
+- **Justificación:** El modo turbo (Fase 9) corre hasta 2000 episodios sin renderizar. Cuando se activa la animación, la grid puede ser 20×20 = 400 celdas actualizando a 50x (≈16ms/frame). Canvas 2D maneja esto sin problema; SVG con 400 elementos animados sí tiene problemas de layout/reflow.
+
+- **Impacto:** Las capas no son nodos DOM sino funciones de dibujo que se ejecutan en orden sobre el mismo contexto 2D. Los colores blueprint se definen en `src/config/colors.ts` como constantes hex, no como clases Tailwind.
+
+- **Referencia:** MDN Canvas API; Flanagan, "JavaScript: The Definitive Guide", cap. Canvas.
+
+---
+
+### 2026-05-22 — Fase 1: Radio de Chebyshev para observabilidad parcial
+
+**Decisión:** Usar distancia de Chebyshev (max(|Δx|, |Δy|)) para definir el radio de visión del agente.
+
+- **Alternativas consideradas:**
+  - Distancia Manhattan: produce un rombo de visión, poco natural para un agente con visión periférica.
+  - Distancia Euclidiana: produce un círculo, más realista pero más costoso de calcular y de renderizar con píxeles.
+  - Chebyshev (elegido): produce un cuadrado de visión, natural para una cuadrícula y alineado con el estilo Wumpus World del problema.
+
+- **Justificación:** El estilo Wumpus World (Russell & Norvig, AIMA cap. 7) usa radio cuadrado. La visión cuadrada es más fácil de razonar en términos de coordenadas de cuadrícula y más eficiente de verificar (max vs raíz cuadrada).
+
+- **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 7 (Agentes lógicos, Wumpus World).
