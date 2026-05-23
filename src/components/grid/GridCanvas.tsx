@@ -2,10 +2,10 @@
 
 import { useRef, useEffect, useCallback } from 'react';
 import { useWorldStore } from '@/store/worldStore';
+import { useAgentStore } from '@/store/agentStore';
 import { useUIStore } from '@/store/uiStore';
 import { DEFAULTS } from '@/config/defaults';
 import {
-  CANVAS_MARGIN,
   calcCellSize,
   drawGridLayer,
   drawCellsLayer,
@@ -19,7 +19,8 @@ export function GridCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { grid, gridSize, agentState, agentLastDir, plan, beliefs } = useWorldStore();
+  const { grid, gridSize, agentState, agentLastDir, plan } = useWorldStore();
+  const { beliefs } = useAgentStore();
   const { showVisibility, showBeliefs, showPlan } = useUIStore();
 
   const draw = useCallback(() => {
@@ -65,9 +66,6 @@ export function GridCanvas() {
 
   // Redibujar ante cualquier cambio de estado
   useEffect(() => { draw(); }, [draw]);
-
-  // Etiqueta de dimensiones en la esquina (solo como dato, usa CANVAS_MARGIN)
-  void CANVAS_MARGIN;
 
   return (
     <div ref={containerRef} className="w-full h-full flex items-center justify-center">

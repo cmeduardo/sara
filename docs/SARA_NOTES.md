@@ -115,3 +115,90 @@
 **Decisión:** Aplicar una distancia mínima Manhattan de `max(2, floor(size/5))` entre celdas de peligro al generarlas.
 
 - **Justificación:** Sin esta restricción, el generador tiende a agrupar todos los peligros en el mismo sector del mapa (ya que se toman de una lista aleatoria continua). La separación garantiza que el agente enfrente peligros distribuidos, haciendo la simulación más interesante y el entrenamiento de Q-learning más diverso. El valor `size/5` escala con el tamaño del mapa (4 en 20×20, 2 en 9×9).
+
+---
+
+### 2026-05-22 — Fase 4: Representación de hechos como claves serializadas
+
+**Decisión:** Representar los hechos de la KB como strings en formato `"Predicado(x,y)"` (ej. `"Safe(3,4)"`) almacenados en un `Set<string>` en memoria y como `string[]` en el store de Zustand.
+
+- **Alternativas consideradas:**
+  - Objetos `{ kind, x, y }` en un `Set` de objetos: imposible en JS (los objetos se comparan por referencia, no por valor), requeriría serialización custom para comparar igualdad.
+  - `Map<string, Predicate>` con clave string: equivalente a la solución elegida pero con indirección innecesaria.
+  - String serializado (elegido): lookup O(1) en Set, serializable a JSON sin transformación, legible en el panel de UI sin parsing.
+
+- **Justificación:** La KB crece monótonamente (solo se añaden hechos, no se retractan excepto `MaybeDanger→ConfirmedDanger`). El closed-world assumption simplifica la inferencia: un hecho no presente en la KB se trata como falso. Esta representación permite usar el panel "Cerebro" para mostrar los hechos directamente como texto sin deserialización.
+
+- **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 7 (Agentes basados en conocimiento, lógica proposicional).
+
+---
+
+### 2026-05-22 — Fase 4: Closed World Assumption y monotónica acumulación de hechos
+
+**Decisión:** La KB es monotónica (solo crece). No se retractan hechos cuando el mundo cambia (dinamismo). La excepción práctica: `MaybeDanger(x,y)` no se retracta cuando `Safe(x,y)` llega, pero ambos coexisten en la KB.
+
+- **Alternativas consideradas:**
+  - Truth Maintenance System (TMS): retracta automáticamente hechos derivados cuando se retracta un soporte. Correcto pero costoso de implementar para un proyecto académico.
+  - Retracción manual en eventos específicos (ej. víctima rescatada → retractar VictimAt): se implementará en Fase 6 (planificación STRIPS) cuando se modelen los efectos de las acciones.
+  - CWA sin retracción (elegido): simple, suficiente para demostrar forward chaining en un entorno casi-estático.
+
+- **Justificación:** El dinamismo del mapa es bajo (configurable, default 15% de probabilidad cada 10 pasos). La KB puede quedar desactualizada en escenarios de alto dinamismo, pero esto es exactamente la motivación para el módulo de incertidumbre bayesiana (Fase 7), que trabaja sobre las CREENCIAS probabilísticas y no sobre la KB lógica.
+
+- **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 7.5 (Wumpus World), cap. 12.6 (Gestión de creencias temporales).
+
+---
+
+### 2026-05-22 — Fase 4: Tres reglas de encadenamiento hacia adelante
+
+**Decisión:** Implementar exactamente tres reglas en el motor de forward chaining:
+- R1: `Visited(x,y) ∧ ¬BreezeAt(x,y) → Safe(nx,ny)` para todos los vecinos ortogonales.
+- R2: `BreezeAt(x,y) → MaybeDanger(nx,ny)` para vecinos que no sean `Safe` ni `ConfirmedDanger`.
+- R3: `BreezeAt(x,y) ∧ |vecinos_inseguros| = 1 → ConfirmedDanger(nx,ny)`.
+
+- **Alternativas consideradas:**
+  - Añadir regla de resolución (PL-Resolution) para inferencias más profundas: justificado académicamente pero implica representar la KB en forma clausal, lo que complica el panel de UI.
+  - Solo R1 y R2, sin R3: el agente nunca podría confirmar un peligro por eliminación, lo que haría la KB menos interesante como demostración académica.
+  - Reglas para `ConfirmedVictim` por sensor: descartado porque el sensor de víctimas ya trabaja sobre el mundo real (el agente puede verlas directamente en el radio de visión).
+
+- **Justificación:** Las tres reglas son directamente derivadas del Wumpus World clásico adaptado a SARA. R3 es la más didáctica porque demuestra razonamiento por eliminación — una inferencia no obvia que el agente realiza sin ver el peligro directamente.
+
+- **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 7.2 (Wumpus World), cap. 7.5 (Forward chaining).
+
+---
+
+### 2026-05-22 — Fase 5: BFS estándar (pasos) vs UCS (costo)
+
+**Decisión:** Implementar BFS estándar que minimiza número de pasos, no Uniform Cost Search (UCS) que minimizaría el costo total.
+
+- **Alternativas consideradas:**
+  - UCS: encuentra el camino de menor costo (incluyendo penalizaciones por peligro). Correcto para comparar costos, pero sus nodos expandidos son difíciles de interpretar en paralelo con A*.
+  - BFS (elegido): minimiza pasos. La diferencia con A* en la tabla de comparativa es más intuitiva: BFS puede elegir pasar por celdas peligrosas si están en el camino más corto en pasos, mientras A* las evita porque tiene mayor costo.
+
+- **Justificación:** El contraste didáctico principal es: BFS ignora riesgos (solo cuenta pasos), A* los considera. Esto ilustra claramente la ventaja del conocimiento heurístico. Si ambos optimizaran costo, la comparativa sería menos clara.
+
+- **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 3.4 (Búsqueda en anchura), cap. 3.5 (UCS).
+
+---
+
+### 2026-05-22 — Fase 5: Heurística A* inadmisible pero consciente del riesgo
+
+**Decisión:** `h(n) = manhattan(n, goal) + λ * riesgo_en_L_path(n, goal)` donde λ=0.5. Esta heurística puede sobreestimar el costo real → A* inadmisible (no garantiza camino óptimo).
+
+- **Alternativas consideradas:**
+  - h(n) = manhattan puro: admisible, camino óptimo garantizado, pero ignora el riesgo → no diferente al BFS en muchos casos.
+  - Penalización en el costo de paso g(n) solo: correctamente modela el riesgo pero la heurística no guía al agente lejos de peligros → convergencia más lenta.
+  - h(n) = Manhattan + λ * riesgo (elegido): la heurística activamente dirige la búsqueda lejos de zonas peligrosas, lo que visualmente es más impactante en la UI.
+
+- **Justificación:** Para el proyecto académico, demostrar que el agente evita peligros activamente es más valioso que la garantía de optimalidad. La inadmisibilidad se documenta explícitamente en el panel de comparativa como tradeoff intencional.
+
+- **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 3.6 (A*), nota sobre heurísticas inadmisibles.
+
+---
+
+### 2026-05-22 — Fase 5: Celdas desconocidas = transitables con penalización
+
+**Decisión:** Las celdas no en `knownCells` se tratan como transitables con `costo = 1 + UNKNOWN_PENALTY (2)` en A*. BFS las trata como costo 1 (sin penalización adicional).
+
+- **Justificación:** El principio de observabilidad parcial exige que la búsqueda opere sobre lo que el agente SABE, no sobre la realidad. Una celda desconocida podría ser un obstáculo (inaccesible) o libre. Asumir que es libre con penalización implementa el balance entre "no puedo ir por ahí" (pesimismo) y "podría ser libre" (optimismo). La penalización de 2 en A* hace que el agente prefiera rutas por celdas conocidas-seguras cuando existen.
+
+- **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 4.4 (Búsqueda en espacios parcialmente observables).

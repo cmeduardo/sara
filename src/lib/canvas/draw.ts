@@ -335,6 +335,85 @@ export function drawPlanLayer(
   ctx.lineJoin = 'miter';
 }
 
+// ─── Capas de búsqueda (comparativa) ─────────────────────────────────────────
+
+/** Dibuja un camino de búsqueda con el color hex especificado */
+export function drawSearchPathLayer(
+  ctx: CanvasRenderingContext2D,
+  path: Position[],
+  cellSize: number,
+  color: string,
+): void {
+  if (path.length < 2) return;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1.5, cellSize * 0.07);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.globalAlpha = 0.82;
+  ctx.beginPath();
+  for (let i = 0; i < path.length; i++) {
+    const px = CANVAS_MARGIN + (path[i]!.x + 0.5) * cellSize;
+    const py = CANVAS_MARGIN + (path[i]!.y + 0.5) * cellSize;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'miter';
+}
+
+/** Dibuja el marcador de objetivo — círculo con X */
+export function drawGoalMarker(
+  ctx: CanvasRenderingContext2D,
+  pos: Position,
+  cellSize: number,
+): void {
+  const cx = CANVAS_MARGIN + (pos.x + 0.5) * cellSize;
+  const cy = CANVAS_MARGIN + (pos.y + 0.5) * cellSize;
+  const r = cellSize * 0.32;
+  const arm = r * 0.55;
+  ctx.strokeStyle = BLUEPRINT_COLORS.accentData;
+  ctx.lineWidth = Math.max(1.5, cellSize * 0.06);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx - arm, cy - arm); ctx.lineTo(cx + arm, cy + arm);
+  ctx.moveTo(cx + arm, cy - arm); ctx.lineTo(cx - arm, cy + arm);
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+}
+
+/**
+ * Oscurece con patrón de puntos las celdas que el agente no ha observado.
+ * knownCells solo se usa para comprobar si la clave "x,y" existe.
+ */
+export function drawFogLayer(
+  ctx: CanvasRenderingContext2D,
+  knownCells: Record<string, unknown>,
+  gridSize: number,
+  cellSize: number,
+): void {
+  const dotStep = Math.max(3, Math.floor(cellSize / 6));
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      if (`${x},${y}` in knownCells) continue;
+      const px = CANVAS_MARGIN + x * cellSize;
+      const py = CANVAS_MARGIN + y * cellSize;
+      ctx.fillStyle = 'rgba(14, 26, 38, 0.72)';
+      ctx.fillRect(px, py, cellSize, cellSize);
+      ctx.fillStyle = 'rgba(42, 58, 74, 0.9)';
+      for (let dy = dotStep; dy < cellSize; dy += dotStep) {
+        for (let dx = dotStep; dx < cellSize; dx += dotStep) {
+          ctx.fillRect(px + dx, py + dy, 1, 1);
+        }
+      }
+    }
+  }
+}
+
 // ─── Hover highlight (solo en editor) ────────────────────────────────────────
 
 export function drawHoverHighlight(

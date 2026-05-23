@@ -1,5 +1,6 @@
 /* Editor manual de mapas — Fase 2 */
 
+import Link from 'next/link';
 import { EditorCanvas } from '@/components/editor/EditorCanvas';
 import { Toolbar } from '@/components/editor/Toolbar';
 import { MapLibrary } from '@/components/editor/MapLibrary';
@@ -9,12 +10,12 @@ export default function EditorPage() {
     <div className="h-full flex flex-col">
       {/* Header */}
       <header className="h-10 border-b border-blueprint-border flex items-center px-4 gap-4 shrink-0">
-        <a
+        <Link
           href="/"
           className="text-blueprint-text-dim hover:text-blueprint-text text-xs font-mono transition-colors"
         >
           ← simulación
-        </a>
+        </Link>
         <span className="text-blueprint-border">|</span>
         <span className="font-sans text-blueprint-accent-data text-sm tracking-widest uppercase">
           SARA
