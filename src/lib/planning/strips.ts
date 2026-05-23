@@ -3,6 +3,7 @@
 import type { Position } from '@/types/world';
 import type { KnownCellRecord } from '@/lib/agent/memory';
 import { astar } from '@/lib/search/astar';
+import { bfs } from '@/lib/search/bfs';
 
 // ── Tipos de acciones STRIPS ──────────────────────────────────────────────────
 
@@ -83,6 +84,8 @@ export interface PlanInput {
   beliefs: Record<string, number>;
   gridSize: number;
   previousReplans?: number;
+  /** Algoritmo de búsqueda a usar. Por defecto A* (informado + consciente de riesgo). */
+  algorithm?: 'bfs' | 'astar';
 }
 
 /**
@@ -92,12 +95,11 @@ export interface PlanInput {
  * Devuelve null si no hay víctimas en la KB.
  */
 export function buildPlan(input: PlanInput): Plan | null {
-  const { agentPos, kbFacts, knownCells, beliefs, gridSize, previousReplans = 0 } = input;
+  const { agentPos, kbFacts, knownCells, beliefs, gridSize, previousReplans = 0, algorithm = 'astar' } = input;
 
   const goal = selectNearestVictim(agentPos, kbFacts);
   if (!goal) return null;
 
-  // El agente ya está sobre la víctima — rescatar sin moverse
   if (goal.x === agentPos.x && goal.y === agentPos.y) {
     return {
       steps: [{ kind: 'RESCUE', to: goal }],
@@ -108,7 +110,9 @@ export function buildPlan(input: PlanInput): Plan | null {
     };
   }
 
-  const result = astar({ start: agentPos, goal, knownCells, beliefs, gridSize });
+  const result = algorithm === 'astar'
+    ? astar({ start: agentPos, goal, knownCells, beliefs, gridSize })
+    : bfs({ start: agentPos, goal, knownCells, beliefs: {}, gridSize });
 
   if (!result.found || result.path.length < 2) {
     return null;
@@ -131,10 +135,12 @@ export function buildPlan(input: PlanInput): Plan | null {
  * Devuelve null si no hay camino o si el agente ya está en el destino.
  */
 export function buildMovePlan(goal: Position, input: PlanInput): Plan | null {
-  const { agentPos, knownCells, beliefs, gridSize, previousReplans = 0 } = input;
+  const { agentPos, knownCells, beliefs, gridSize, previousReplans = 0, algorithm = 'astar' } = input;
   if (goal.x === agentPos.x && goal.y === agentPos.y) return null;
 
-  const result = astar({ start: agentPos, goal, knownCells, beliefs, gridSize });
+  const result = algorithm === 'astar'
+    ? astar({ start: agentPos, goal, knownCells, beliefs, gridSize })
+    : bfs({ start: agentPos, goal, knownCells, beliefs: {}, gridSize });
   if (!result.found || result.path.length < 2) return null;
 
   const steps: PlanStep[] = [];
@@ -153,12 +159,14 @@ export function buildMovePlan(goal: Position, input: PlanInput): Plan | null {
 // ── Plan de exploración ───────────────────────────────────────────────────────
 
 /**
- * Plan de exploración frontera: A* hacia la celda no explorada más cercana.
+ * Plan de exploración frontera usando BFS (algoritmo no informado).
+ * BFS garantiza el camino con mínimos pasos hacia la celda frontera más cercana.
  * "Frontera" = celdas adyacentes a celdas conocidas que aún no han sido visitadas.
- * Devuelve null si toda la cuadrícula está explorada (no hay frontera alcanzable).
+ * A* se usa para rescate (informado + consciente del riesgo); BFS para exploración.
+ * Devuelve null si toda la cuadrícula está explorada o no hay frontera alcanzable.
  */
 export function buildExplorationPlan(input: PlanInput): Plan | null {
-  const { agentPos, knownCells, beliefs, gridSize, previousReplans = 0 } = input;
+  const { agentPos, knownCells, gridSize, previousReplans = 0 } = input;
 
   const frontierSet = new Set<string>();
 
@@ -183,6 +191,7 @@ export function buildExplorationPlan(input: PlanInput): Plan | null {
 
   if (frontierSet.size === 0) return null;
 
+  // Candidatos más cercanos por Manhattan para limitar llamadas BFS
   const candidates = [...frontierSet]
     .map((k) => {
       const [x, y] = k.split(',').map(Number) as [number, number];
@@ -191,8 +200,9 @@ export function buildExplorationPlan(input: PlanInput): Plan | null {
     .sort((a, b) => a.dist - b.dist)
     .slice(0, 10);
 
+  // BFS: mínimo de pasos, sin sesgo por riesgo — ideal para exploración
   for (const { pos: target } of candidates) {
-    const result = astar({ start: agentPos, goal: target, knownCells, beliefs, gridSize });
+    const result = bfs({ start: agentPos, goal: target, knownCells, beliefs: {}, gridSize });
     if (result.found && result.path.length >= 2) {
       const steps: PlanStep[] = [];
       for (let i = 0; i < result.path.length - 1; i++) {

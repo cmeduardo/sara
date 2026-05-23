@@ -31,7 +31,6 @@ interface WorldStore {
 function buildHardcodedGrid(): Grid {
   let grid = createEmpty(12 as GridSize);
 
-  // Obstáculos distribuidos para no bloquear el mapa
   const obstacles: [number, number][] = [
     [3, 0], [7, 1], [4, 2],
     [0, 3], [10, 3],
@@ -44,25 +43,21 @@ function buildHardcodedGrid(): Grid {
     grid = setCell(grid, { x, y }, { type: 'obstacle' });
   }
 
-  // Tres víctimas distribuidas por el mapa
   grid = setCell(grid, { x: 9, y: 2 }, { type: 'victim' });
   grid = setCell(grid, { x: 4, y: 6 }, { type: 'victim' });
   grid = setCell(grid, { x: 5, y: 10 }, { type: 'victim' });
 
-  // Zonas de peligro con distintas probabilidades de daño
   grid = setCell(grid, { x: 6, y: 3 }, { type: 'danger', dangerProb: 0.7, dangerDamage: 20 });
   grid = setCell(grid, { x: 9, y: 5 }, { type: 'danger', dangerProb: 0.4, dangerDamage: 10 });
   grid = setCell(grid, { x: 8, y: 8 }, { type: 'danger', dangerProb: 0.6, dangerDamage: 15 });
-  // Peligro dentro del radio de visión del agente (r=3 desde (1,1) → cubre hasta x/y=4)
   grid = setCell(grid, { x: 3, y: 3 }, { type: 'danger', dangerProb: 0.3, dangerDamage: 8 });
 
-  // Estación de recarga
   grid = setCell(grid, { x: 9, y: 11 }, { type: 'station' });
 
   return grid;
 }
 
-const initialAgentState: AgentState = {
+const BASE_AGENT_STATE: AgentState = {
   pos: { x: 1, y: 1 },
   energy: DEFAULTS.initialEnergy,
   hp: DEFAULTS.initialHP,
@@ -71,42 +66,47 @@ const initialAgentState: AgentState = {
   alive: true,
 };
 
-const _hardcoded = buildHardcodedGrid();
+/** Crea una instancia independiente del store del mundo */
+export function createWorldStore() {
+  const hardcoded = buildHardcodedGrid();
+  return create<WorldStore>((set) => ({
+    grid: hardcoded,
+    initialGrid: hardcoded,
+    gridSize: 12,
+    agentState: BASE_AGENT_STATE,
+    agentLastDir: 'N',
+    agentStart: BASE_AGENT_STATE.pos,
+    plan: [],
 
-export const useWorldStore = create<WorldStore>((set) => ({
-  grid: _hardcoded,
-  initialGrid: _hardcoded,
-  gridSize: 12,
-  agentState: initialAgentState,
-  agentLastDir: 'N',
-  agentStart: initialAgentState.pos,
-  plan: [],
+    setGrid: (grid) => set({ grid }),
+    loadGrid: (grid, size, agentStart) =>
+      set({
+        grid,
+        initialGrid: grid,
+        gridSize: size,
+        agentState: { ...BASE_AGENT_STATE, pos: agentStart },
+        agentLastDir: 'N',
+        agentStart,
+        plan: [],
+      }),
+    setGridSize: (size) => set({ gridSize: size }),
+    updateAgentState: (partial) =>
+      set((state) => ({ agentState: { ...state.agentState, ...partial } })),
+    setAgentLastDir: (dir) => set({ agentLastDir: dir }),
+    setAgentStart: (pos) => set({ agentStart: pos }),
+    setPlan: (plan) => set({ plan }),
+    initHardcoded: () =>
+      set({
+        grid: hardcoded,
+        initialGrid: hardcoded,
+        gridSize: 12,
+        agentState: BASE_AGENT_STATE,
+        agentLastDir: 'N',
+        agentStart: BASE_AGENT_STATE.pos,
+        plan: [],
+      }),
+  }));
+}
 
-  setGrid: (grid) => set({ grid }),
-  loadGrid: (grid, size, agentStart) =>
-    set({
-      grid,
-      initialGrid: grid,
-      gridSize: size,
-      agentState: { ...initialAgentState, pos: agentStart },
-      agentLastDir: 'N',
-      agentStart,
-      plan: [],
-    }),
-  setGridSize: (size) => set({ gridSize: size }),
-  updateAgentState: (partial) =>
-    set((state) => ({ agentState: { ...state.agentState, ...partial } })),
-  setAgentLastDir: (dir) => set({ agentLastDir: dir }),
-  setAgentStart: (pos) => set({ agentStart: pos }),
-  setPlan: (plan) => set({ plan }),
-  initHardcoded: () =>
-    set({
-      grid: _hardcoded,
-      initialGrid: _hardcoded,
-      gridSize: 12,
-      agentState: initialAgentState,
-      agentLastDir: 'N',
-      agentStart: initialAgentState.pos,
-      plan: [],
-    }),
-}));
+/** Instancia principal (agente A*) */
+export const useWorldStore = createWorldStore();

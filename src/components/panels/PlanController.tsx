@@ -5,6 +5,10 @@
 import { useEffect, useRef } from 'react';
 import { useWorldStore } from '@/store/worldStore';
 import { useAgentStore } from '@/store/agentStore';
+import { useLearningStore } from '@/store/learningStore';
+import { useWorldStoreBFS } from '@/store/worldStoreBFS';
+import { useAgentStoreBFS } from '@/store/agentStoreBFS';
+import { useLearningStoreBFS } from '@/store/learningStoreBFS';
 import { DEFAULTS } from '@/config/defaults';
 import { runAgentCycle, applyMoveAction } from '@/lib/agent/loop';
 import { maybeReplan } from '@/lib/planning/replan';
@@ -12,12 +16,12 @@ import { buildPlan, EMPTY_PLAN, planRemainingPath, buildExplorationPlan, buildMo
 import { getCell, setCell } from '@/lib/environment/grid';
 import { tickDynamism } from '@/lib/environment/dynamism';
 import { evaluateActions } from '@/lib/utility/utility';
+import { extractState, selectAction } from '@/lib/learning/qlearning';
 import type { Direction } from '@/types/world';
-import type { Plan } from '@/lib/planning/strips';
+import type { Plan, PlanInput } from '@/lib/planning/strips';
 
 const STEP_INTERVAL_MS = 450;
 
-/** Convierte dos posiciones adyacentes en una dirección cardinal */
 function dirBetween(from: { x: number; y: number }, to: { x: number; y: number }): Direction | null {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -28,227 +32,258 @@ function dirBetween(from: { x: number; y: number }, to: { x: number; y: number }
   return null;
 }
 
-/** Ejecuta un ciclo cognitivo + acción del plan */
-function executePlanStep() {
-  const { grid, agentState, setAgentLastDir, updateAgentState, setPlan: setWorldPlan, setGrid } =
-    useWorldStore.getState();
-  const { knownCells, kbFacts, beliefs, plan, updateMemory, addSensorReading, setKB, setBeliefs, setLoopPhase, setPlan, setActionUtilities } =
-    useAgentStore.getState();
+function computeReward(deltaRescued: number, deltaExplored: number, deltaSteps: number): number {
+  return (
+    deltaRescued * DEFAULTS.rewardWeights.victim +
+    deltaExplored * DEFAULTS.rewardWeights.explore +
+    deltaSteps * DEFAULTS.rewardWeights.step
+  );
+}
 
-  if (!agentState.alive) return;
-  if (plan.status !== 'executing') return;
+/**
+ * Fábrica que crea un PlanController ligado a instancias específicas de stores.
+ * Permite correr dos agentes independientes (BFS y A*) en paralelo.
+ */
+function makePlanController(
+  worldHook: typeof useWorldStore,
+  agentHook: typeof useAgentStore,
+  learningHook: typeof useLearningStore,
+  algorithm: 'bfs' | 'astar',
+) {
+  function decideNextPlan(planInput: PlanInput, agentEnergy: number): Plan | null {
+    const { agentPos, kbFacts, knownCells, beliefs, gridSize } = planInput;
+    const { qTable, epsilon, lastState, lastAction, lastKnownCount, lastRescued, lastSteps, setLastTransition, updateQStep } =
+      learningHook.getState();
+    const { agentState } = worldHook.getState();
 
-  // ── Dinamismo del entorno cada N pasos ────────────────────────────────────
-  if (
-    DEFAULTS.dynamism.enabled &&
-    agentState.steps > 0 &&
-    agentState.steps % DEFAULTS.dynamism.tickEveryNSteps === 0
-  ) {
-    const dynGrid = tickDynamism(grid, DEFAULTS.dynamism);
-    if (dynGrid !== grid) setGrid(dynGrid);
+    const currentKnown   = Object.keys(knownCells).length;
+    const currentRescued = agentState.rescued;
+    const currentSteps   = agentState.steps;
+
+    if (lastState && lastAction) {
+      const nextState = extractState({ kbFacts, energy: agentEnergy, knownCells, gridSize });
+      const reward = computeReward(
+        currentRescued - lastRescued,
+        currentKnown   - lastKnownCount,
+        currentSteps   - lastSteps,
+      );
+      updateQStep(reward, nextState);
+    }
+
+    const evals = evaluateActions({ agentPos, agentEnergy, kbFacts, knownCells, beliefs, gridSize });
+    const { setActionUtilities, setLoopPhase } = agentHook.getState();
+    setActionUtilities(evals);
+    setLoopPhase('deciding');
+
+    const qState = extractState({ kbFacts, energy: agentEnergy, knownCells, gridSize });
+    const chosen  = selectAction(qTable, qState, evals, epsilon);
+
+    let plan: Plan | null = null;
+    if (chosen?.type === 'rescue') {
+      plan = buildPlan({ ...planInput, algorithm });
+    } else if (chosen?.type === 'recharge') {
+      plan = buildMovePlan(chosen.goal, { ...planInput, algorithm });
+    } else {
+      plan = buildExplorationPlan({ ...planInput, algorithm });
+    }
+
+    if (!plan) plan = buildPlan({ ...planInput, algorithm }) ?? buildExplorationPlan({ ...planInput, algorithm });
+
+    const actionType = chosen?.type ?? 'explore';
+    setLastTransition(qState, actionType, currentKnown, currentRescued, currentSteps);
+
+    return plan;
   }
 
-  // ── Ciclo cognitivo ────────────────────────────────────────────────────────
-  setLoopPhase('perceiving');
-  const result = runAgentCycle(grid, agentState, knownCells, kbFacts, DEFAULTS, beliefs);
-  updateMemory(result.perceived, agentState.steps);
-  addSensorReading(result.sensorReading);
-  setLoopPhase('updating_beliefs');
-  setBeliefs(result.updatedBeliefs);
+  function executePlanStep() {
+    const { grid, agentState, setAgentLastDir, updateAgentState, setPlan: setWorldPlan, setGrid } =
+      worldHook.getState();
+    const { knownCells, kbFacts, beliefs, plan, updateMemory, addSensorReading, setKB, setBeliefs, setLoopPhase, setPlan } =
+      agentHook.getState();
 
-  // ── Replanificación si el próximo paso quedó inválido ──────────────────────
-  setLoopPhase('planning');
-  const freshKBFacts = result.kbFacts;
-  const freshKnownCells = { ...knownCells, ...Object.fromEntries(
-    result.perceived.map(({ pos, cell }) => [`${pos.x},${pos.y}`, { cell, lastSeenStep: agentState.steps }])
-  )};
+    if (!agentState.alive) return;
+    if (plan.status !== 'executing') return;
 
-  const validPlan = maybeReplan(plan, {
-    agentPos: agentState.pos,
-    kbFacts: freshKBFacts,
-    knownCells: freshKnownCells,
-    beliefs: result.updatedBeliefs,
-    gridSize: grid.length,
-  });
+    // Límite de pasos por episodio — evita bucles infinitos en mapas totalmente explorados
+    if (agentState.steps >= DEFAULTS.maxStepsPerEpisode) {
+      const { lastState, lastAction, updateQStep, nextEpisode } = learningHook.getState();
+      if (lastState && lastAction) {
+        const knownCount = Object.keys(knownCells).length;
+        const timeoutState = extractState({ kbFacts, energy: agentState.energy, knownCells, gridSize: grid.length });
+        updateQStep(-5, timeoutState);
+        void knownCount;
+      }
+      nextEpisode(agentState.rescued, agentState.steps, true);
+      setPlan(EMPTY_PLAN);
+      setWorldPlan([]);
+      setLoopPhase('idle');
+      return;
+    }
 
-  setKB(freshKBFacts, result.kbNewFacts);
+    if (
+      DEFAULTS.dynamism.enabled &&
+      agentState.steps > 0 &&
+      agentState.steps % DEFAULTS.dynamism.tickEveryNSteps === 0
+    ) {
+      const dynGrid = tickDynamism(grid, DEFAULTS.dynamism);
+      if (dynGrid !== grid) setGrid(dynGrid);
+    }
 
-  // Plan fallido → evaluar utilidades y recuperar
-  if (validPlan.status === 'failed') {
-    const planInput = {
+    setLoopPhase('perceiving');
+    const result = runAgentCycle(grid, agentState, knownCells, kbFacts, DEFAULTS, beliefs);
+    updateMemory(result.perceived, agentState.steps);
+    addSensorReading(result.sensorReading);
+    setLoopPhase('updating_beliefs');
+    setBeliefs(result.updatedBeliefs);
+
+    setLoopPhase('planning');
+    const freshKBFacts = result.kbFacts;
+    const freshKnownCells = { ...knownCells, ...Object.fromEntries(
+      result.perceived.map(({ pos, cell }) => [`${pos.x},${pos.y}`, { cell, lastSeenStep: agentState.steps }])
+    )};
+
+    const validPlan = maybeReplan(plan, {
+      agentPos: agentState.pos,
+      kbFacts: freshKBFacts,
+      knownCells: freshKnownCells,
+      beliefs: result.updatedBeliefs,
+      gridSize: grid.length,
+      algorithm,
+    });
+
+    setKB(freshKBFacts, result.kbNewFacts);
+
+    const basePlanInput: PlanInput = {
       agentPos: agentState.pos,
       kbFacts: freshKBFacts,
       knownCells: freshKnownCells,
       beliefs: result.updatedBeliefs,
       gridSize: grid.length,
       previousReplans: validPlan.replansCount,
+      algorithm,
     };
-    const evals = evaluateActions({
-      agentPos: agentState.pos,
-      agentEnergy: agentState.energy,
-      kbFacts: freshKBFacts,
-      knownCells: freshKnownCells,
-      beliefs: result.updatedBeliefs,
-      gridSize: grid.length,
-    });
-    setActionUtilities(evals);
-    setLoopPhase('deciding');
-    const best = evals[0];
-    let recovery: Plan | null = null;
-    if (best?.type === 'rescue') {
-      recovery = buildPlan(planInput);
-    } else if (best?.type === 'recharge') {
-      recovery = buildMovePlan(best.goal, planInput);
-    } else {
-      recovery = buildExplorationPlan(planInput);
+
+    if (validPlan.status === 'failed') {
+      const recovery = decideNextPlan(basePlanInput, agentState.energy);
+      setPlan(recovery ?? { ...EMPTY_PLAN, status: 'executing' });
+      setWorldPlan(recovery ? planRemainingPath(recovery) : []);
+      setLoopPhase('idle');
+      return;
     }
-    if (!recovery) recovery = buildPlan(planInput) ?? buildExplorationPlan(planInput);
-    setPlan(recovery ?? { ...EMPTY_PLAN, status: 'executing' });
-    setWorldPlan(recovery ? planRemainingPath(recovery) : []);
-    setLoopPhase('idle');
-    return;
-  }
 
-  const step = validPlan.steps[validPlan.currentIdx];
-  if (!step) {
-    // Plan exhausto → evaluar utilidades y elegir la mejor acción siguiente
-    const planInput = {
-      agentPos: agentState.pos,
-      kbFacts: freshKBFacts,
-      knownCells: freshKnownCells,
-      beliefs: result.updatedBeliefs,
-      gridSize: grid.length,
-      previousReplans: validPlan.replansCount,
-    };
-    const evals = evaluateActions({
-      agentPos: agentState.pos,
-      agentEnergy: agentState.energy,
-      kbFacts: freshKBFacts,
-      knownCells: freshKnownCells,
-      beliefs: result.updatedBeliefs,
-      gridSize: grid.length,
-    });
-    setActionUtilities(evals);
-    setLoopPhase('deciding');
-    const best = evals[0];
-    let nextPlan: Plan | null = null;
-    if (best?.type === 'rescue') {
-      nextPlan = buildPlan(planInput);
-    } else if (best?.type === 'recharge') {
-      nextPlan = buildMovePlan(best.goal, planInput);
-    } else {
-      nextPlan = buildExplorationPlan(planInput);
+    const step = validPlan.steps[validPlan.currentIdx];
+    if (!step) {
+      const nextPlan = decideNextPlan(basePlanInput, agentState.energy);
+      setPlan(nextPlan ?? { ...EMPTY_PLAN, status: 'executing' });
+      setWorldPlan(nextPlan ? planRemainingPath(nextPlan) : []);
+      setLoopPhase('idle');
+      return;
     }
-    if (!nextPlan) nextPlan = buildPlan(planInput) ?? buildExplorationPlan(planInput);
-    setPlan(nextPlan ?? { ...EMPTY_PLAN, status: 'executing' });
-    setWorldPlan(nextPlan ? planRemainingPath(nextPlan) : []);
-    setLoopPhase('idle');
-    return;
-  }
 
-  setLoopPhase('acting');
+    setLoopPhase('acting');
 
-  if (step.kind === 'MOVE') {
-    // ── Ejecutar movimiento ──────────────────────────────────────────────────
-    const dir = dirBetween(agentState.pos, step.to);
-    if (dir) {
-      const newState = applyMoveAction(grid, agentState, dir);
-      if (newState) {
-        setAgentLastDir(dir);
-        updateAgentState(newState);
-      } else {
-        // Camino bloqueado (obstáculo descubierto) — replanificar
-        const planInput = {
-          agentPos: agentState.pos,
-          kbFacts: freshKBFacts,
-          knownCells: freshKnownCells,
-          beliefs: result.updatedBeliefs,
-          gridSize: grid.length,
-          previousReplans: validPlan.replansCount + 1,
-        };
-        const replan = buildPlan(planInput) ?? buildExplorationPlan(planInput);
+    if (step.kind === 'MOVE') {
+      const dir = dirBetween(agentState.pos, step.to);
+      if (dir) {
+        const newState = applyMoveAction(grid, agentState, dir);
+        if (newState) {
+          setAgentLastDir(dir);
+          updateAgentState(newState);
+
+          if (!newState.alive) {
+            const { lastState, lastAction, lastKnownCount, lastRescued, lastSteps, updateQStep, nextEpisode } =
+              learningHook.getState();
+            const finalSteps    = agentState.steps + 1;
+            const finalRescued  = agentState.rescued;
+            if (lastState && lastAction) {
+              const deadState = extractState({ kbFacts: freshKBFacts, energy: 0, knownCells: freshKnownCells, gridSize: grid.length });
+              const reward = computeReward(
+                finalRescued - lastRescued,
+                Object.keys(freshKnownCells).length - lastKnownCount,
+                finalSteps - lastSteps,
+              ) + DEFAULTS.rewardWeights.death;
+              updateQStep(reward, deadState);
+            }
+            nextEpisode(finalRescued, finalSteps, false);
+            setLoopPhase('idle');
+            return;
+          }
+        } else {
+          const replan = buildPlan({ ...basePlanInput, previousReplans: validPlan.replansCount + 1 })
+            ?? buildExplorationPlan({ ...basePlanInput, previousReplans: validPlan.replansCount + 1 });
+          setPlan(replan ?? { ...EMPTY_PLAN, status: 'executing' });
+          setWorldPlan(replan ? planRemainingPath(replan) : []);
+          setLoopPhase('idle');
+          return;
+        }
+      }
+      const advanced = { ...validPlan, currentIdx: validPlan.currentIdx + 1 };
+      setPlan(advanced);
+      setWorldPlan(planRemainingPath(advanced));
+    } else {
+      const { x, y } = step.to;
+      const targetCell = getCell(grid, { x, y });
+
+      if (targetCell?.type !== 'victim') {
+        const factsWithout = freshKBFacts.filter((f) => f !== `VictimAt(${x},${y})`);
+        setKB(factsWithout, []);
+        const replan = buildPlan({ ...basePlanInput, kbFacts: factsWithout, previousReplans: validPlan.replansCount + 1 })
+          ?? buildExplorationPlan({ ...basePlanInput, kbFacts: factsWithout, previousReplans: validPlan.replansCount + 1 });
         setPlan(replan ?? { ...EMPTY_PLAN, status: 'executing' });
         setWorldPlan(replan ? planRemainingPath(replan) : []);
         setLoopPhase('idle');
         return;
       }
-    }
-    const advanced = { ...validPlan, currentIdx: validPlan.currentIdx + 1 };
-    setPlan(advanced);
-    setWorldPlan(planRemainingPath(advanced));
-  } else {
-    // ── Ejecutar rescate ─────────────────────────────────────────────────────
-    const { x, y } = step.to;
-    const targetCell = getCell(grid, { x, y });
 
-    // Si la víctima ya no está (se movió por dinamismo), retractar y replanear
-    if (targetCell?.type !== 'victim') {
-      const factsWithout = freshKBFacts.filter((f) => f !== `VictimAt(${x},${y})`);
-      setKB(factsWithout, []);
-      const planInput = {
-        agentPos: agentState.pos,
-        kbFacts: factsWithout,
-        knownCells: freshKnownCells,
-        beliefs: result.updatedBeliefs,
-        gridSize: grid.length,
-        previousReplans: validPlan.replansCount + 1,
-      };
-      const replan = buildPlan(planInput) ?? buildExplorationPlan(planInput);
-      setPlan(replan ?? { ...EMPTY_PLAN, status: 'executing' });
-      setWorldPlan(replan ? planRemainingPath(replan) : []);
-      setLoopPhase('idle');
-      return;
+      const updatedGrid = setCell(grid, { x, y }, { type: 'empty' });
+      setGrid(updatedGrid);
+      const factsAfterRescue = freshKBFacts.filter((f) => f !== `VictimAt(${x},${y})`);
+      setKB(factsAfterRescue, []);
+      updateAgentState({ rescued: agentState.rescued + 1 });
+
+      const nextPlan = decideNextPlan(
+        { ...basePlanInput, kbFacts: factsAfterRescue },
+        agentState.energy,
+      );
+      setPlan(nextPlan ?? { ...EMPTY_PLAN, status: 'executing' });
+      setWorldPlan(nextPlan ? planRemainingPath(nextPlan) : []);
     }
 
-    // Eliminar víctima del grid + retractar VictimAt de la KB
-    const updatedGrid = setCell(grid, { x, y }, { type: 'empty' });
-    setGrid(updatedGrid);
-    const factsAfterRescue = freshKBFacts.filter((f) => f !== `VictimAt(${x},${y})`);
-    setKB(factsAfterRescue, []);
-    updateAgentState({ rescued: agentState.rescued + 1 });
-
-    // Rescatar siguiente víctima o explorar más
-    const planInput = {
-      agentPos: agentState.pos,
-      kbFacts: factsAfterRescue,
-      knownCells: freshKnownCells,
-      beliefs: result.updatedBeliefs,
-      gridSize: grid.length,
-      previousReplans: validPlan.replansCount,
-    };
-    const nextPlan = buildPlan(planInput) ?? buildExplorationPlan(planInput);
-    setPlan(nextPlan ?? { ...EMPTY_PLAN, status: 'executing' });
-    setWorldPlan(nextPlan ? planRemainingPath(nextPlan) : []);
+    setLoopPhase('idle');
   }
 
-  setLoopPhase('idle');
+  return function PlanControllerInstance() {
+    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const { plan } = agentHook();
+    const { agentState } = worldHook();
+
+    const shouldRun = agentState.alive && plan.status === 'executing';
+
+    useEffect(() => {
+      if (shouldRun) {
+        if (!intervalRef.current) {
+          intervalRef.current = setInterval(executePlanStep, STEP_INTERVAL_MS);
+        }
+      } else {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      }
+      return () => {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      };
+    }, [shouldRun]);
+
+    return null;
+  };
 }
 
-export function PlanController() {
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const { plan } = useAgentStore();
-  const { agentState } = useWorldStore();
+/** Controlador del agente A* (usa A* para rescate/recarga, BFS para exploración) */
+export const PlanController = makePlanController(useWorldStore, useAgentStore, useLearningStore, 'astar');
 
-  const shouldRun = agentState.alive && plan.status === 'executing';
-
-  useEffect(() => {
-    if (shouldRun) {
-      if (!intervalRef.current) {
-        intervalRef.current = setInterval(executePlanStep, STEP_INTERVAL_MS);
-      }
-    } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    }
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [shouldRun]);
-
-  return null;
-}
+/** Controlador del agente BFS (usa BFS para todo — no informado) */
+export const PlanControllerBFS = makePlanController(useWorldStoreBFS, useAgentStoreBFS, useLearningStoreBFS, 'bfs');

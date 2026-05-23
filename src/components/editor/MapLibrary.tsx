@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useEditorStore } from '@/store/editorStore';
 import { useWorldStore } from '@/store/worldStore';
 import { useAgentStore } from '@/store/agentStore';
+import { useWorldStoreBFS } from '@/store/worldStoreBFS';
+import { useAgentStoreBFS } from '@/store/agentStoreBFS';
 import {
   saveMap,
   deleteMap,
@@ -27,6 +29,8 @@ export function MapLibrary() {
 
   const { loadGrid, setPlan: setWorldPlan } = useWorldStore();
   const { reset: resetAgent } = useAgentStore();
+  const { loadGrid: loadGridBFS, setPlan: setWorldPlanBFS } = useWorldStoreBFS();
+  const { reset: resetAgentBFS } = useAgentStoreBFS();
 
   // Cargar lista al montar
   useEffect(() => {
@@ -58,6 +62,9 @@ export function MapLibrary() {
     loadGrid(map.cells as Grid, map.size, map.agentStart);
     setWorldPlan([]);
     resetAgent();
+    loadGridBFS(map.cells as Grid, map.size, map.agentStart);
+    setWorldPlanBFS([]);
+    resetAgentBFS();
     router.push('/');
   }
 

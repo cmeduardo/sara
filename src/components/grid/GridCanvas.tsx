@@ -1,9 +1,7 @@
 'use client';
 
 import { useRef, useEffect, useCallback } from 'react';
-import { useWorldStore } from '@/store/worldStore';
-import { useAgentStore } from '@/store/agentStore';
-import { useUIStore } from '@/store/uiStore';
+import type { Grid, GridSize, Position, AgentState, Direction } from '@/types/world';
 import { DEFAULTS } from '@/config/defaults';
 import {
   calcCellSize,
@@ -15,13 +13,24 @@ import {
   drawPlanLayer,
 } from '@/lib/canvas/draw';
 
-export function GridCanvas() {
+interface GridCanvasProps {
+  grid: Grid;
+  gridSize: GridSize;
+  agentState: AgentState;
+  agentLastDir: Direction;
+  plan: Position[];
+  beliefs: Record<string, number>;
+  showVisibility: boolean;
+  showBeliefs: boolean;
+  showPlan: boolean;
+}
+
+export function GridCanvas({
+  grid, gridSize, agentState, agentLastDir, plan,
+  beliefs, showVisibility, showBeliefs, showPlan,
+}: GridCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  const { grid, gridSize, agentState, agentLastDir, plan } = useWorldStore();
-  const { beliefs } = useAgentStore();
-  const { showVisibility, showBeliefs, showPlan } = useUIStore();
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -42,11 +51,9 @@ export function GridCanvas() {
     drawAgentLayer(ctx, agentState, agentLastDir, cellSize);
   }, [grid, gridSize, agentState, agentLastDir, plan, beliefs, showVisibility, showBeliefs, showPlan]);
 
-  // Referencia siempre actualizada para el ResizeObserver
   const drawRef = useRef(draw);
   useEffect(() => { drawRef.current = draw; }, [draw]);
 
-  // ResizeObserver: ajusta el canvas a cuadrado y redibujar
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -64,7 +71,6 @@ export function GridCanvas() {
     return () => observer.disconnect();
   }, []);
 
-  // Redibujar ante cualquier cambio de estado
   useEffect(() => { draw(); }, [draw]);
 
   return (

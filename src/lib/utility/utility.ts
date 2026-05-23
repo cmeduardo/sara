@@ -118,10 +118,17 @@ export function evaluateActions(input: {
     const [x, y] = key.split(',').map(Number) as [number, number];
     const stationPos: Position = { x, y };
     const dist = manhattan(agentPos, stationPos);
+    const ratio = Math.max(0, agentEnergy / maxEnergy);
+
+    // No ofrecer recarga si ya está en la estación con energía ≥ 90% — no hay beneficio
+    if (dist === 0 && ratio >= 0.9) break;
+
     const travelCost = dist * DEFAULTS.moveCost;
     const dangerCost = dangerAlongLPath(agentPos, stationPos, beliefs);
     const urgency = energyUrgency(agentEnergy, maxEnergy);
-    const baseReward = DEFAULTS.rewardWeights.rechargeLow * (1 + 10 * urgency);
+    // Escalar recompensa por deficiencia de energía: irrelevante a energía llena
+    const deficiency = 1 - ratio;
+    const baseReward = DEFAULTS.rewardWeights.rechargeLow * (deficiency + urgency * 10) * 2;
     results.push({
       type: 'recharge',
       goal: stationPos,

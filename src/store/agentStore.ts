@@ -9,95 +9,79 @@ import { EMPTY_PLAN } from '@/lib/planning/strips';
 export type KnownCellRecord = Record<string, KnownCell>;
 type BeliefRecord = Record<string, number>;
 
-/** Máximo de lecturas de sensor guardadas en historial */
 const MAX_SENSOR_HISTORY = 30;
 
 interface AgentStore {
-  /** Celdas que el agente ha observado directamente */
   knownCells: KnownCellRecord;
-  /** Creencias probabilísticas sobre celdas no observadas: "x,y" → P(danger) */
   beliefs: BeliefRecord;
-  /** Celdas percibidas en el turno actual */
   lastPerceived: PerceivedCell[];
-  /** Historial de lecturas de sensores (más reciente primero) */
   sensorReadings: SensorReading[];
-  /** Fase actual del ciclo cognitivo */
   loopPhase: LoopPhase;
-  /** Hechos actuales de la KB (claves serializadas, ej. "Safe(3,4)") */
   kbFacts: string[];
-  /** Hechos nuevos del último turno — para resaltado en UI */
   kbNewFacts: string[];
-  /** Plan STRIPS activo (Fase 6) */
   plan: Plan;
-  /** Evaluaciones de utilidad del último ciclo de decisión (Fase 8) */
   actionUtilities: ActionEvaluation[];
 
-  /** Actualiza la memoria con las percepciones del turno */
   updateMemory: (perceived: PerceivedCell[], step: number) => void;
-  /** Agrega una lectura de sensor al historial */
   addSensorReading: (reading: SensorReading) => void;
-  /** Actualiza la creencia de una celda */
   setBelief: (pos: Position, dangerProb: number) => void;
-  /** Reemplaza el mapa de creencias completo */
   setBeliefs: (beliefs: BeliefRecord) => void;
   setLoopPhase: (phase: LoopPhase) => void;
-  /** Reemplaza la KB con los hechos nuevos del turno */
   setKB: (facts: string[], newFacts: string[]) => void;
   setPlan: (plan: Plan) => void;
   setActionUtilities: (evals: ActionEvaluation[]) => void;
   reset: () => void;
 }
 
-export const useAgentStore = create<AgentStore>((set) => ({
-  knownCells: {},
-  beliefs: {},
-  lastPerceived: [],
-  sensorReadings: [],
-  loopPhase: 'idle',
-  kbFacts: [],
-  kbNewFacts: [],
+const INITIAL_STATE = {
+  knownCells: {} as KnownCellRecord,
+  beliefs: {} as BeliefRecord,
+  lastPerceived: [] as PerceivedCell[],
+  sensorReadings: [] as SensorReading[],
+  loopPhase: 'idle' as LoopPhase,
+  kbFacts: [] as string[],
+  kbNewFacts: [] as string[],
   plan: EMPTY_PLAN,
-  actionUtilities: [],
+  actionUtilities: [] as ActionEvaluation[],
+};
 
-  updateMemory: (perceived, step) =>
-    set((state) => {
-      const updated = { ...state.knownCells };
-      for (const { pos, cell } of perceived) {
-        updated[`${pos.x},${pos.y}`] = { cell: { ...cell }, lastSeenStep: step };
-      }
-      return { knownCells: updated, lastPerceived: perceived };
-    }),
+/** Crea una instancia independiente del store cognitivo */
+export function createAgentStore() {
+  return create<AgentStore>((set) => ({
+    ...INITIAL_STATE,
 
-  addSensorReading: (reading) =>
-    set((state) => ({
-      sensorReadings: [reading, ...state.sensorReadings].slice(0, MAX_SENSOR_HISTORY),
-    })),
+    updateMemory: (perceived, step) =>
+      set((state) => {
+        const updated = { ...state.knownCells };
+        for (const { pos, cell } of perceived) {
+          updated[`${pos.x},${pos.y}`] = { cell: { ...cell }, lastSeenStep: step };
+        }
+        return { knownCells: updated, lastPerceived: perceived };
+      }),
 
-  setBelief: (pos, dangerProb) =>
-    set((state) => ({
-      beliefs: { ...state.beliefs, [`${pos.x},${pos.y}`]: dangerProb },
-    })),
+    addSensorReading: (reading) =>
+      set((state) => ({
+        sensorReadings: [reading, ...state.sensorReadings].slice(0, MAX_SENSOR_HISTORY),
+      })),
 
-  setBeliefs: (beliefs) => set({ beliefs }),
+    setBelief: (pos, dangerProb) =>
+      set((state) => ({
+        beliefs: { ...state.beliefs, [`${pos.x},${pos.y}`]: dangerProb },
+      })),
 
-  setLoopPhase: (loopPhase) => set({ loopPhase }),
+    setBeliefs: (beliefs) => set({ beliefs }),
 
-  setKB: (kbFacts, kbNewFacts) => set({ kbFacts, kbNewFacts }),
+    setLoopPhase: (loopPhase) => set({ loopPhase }),
 
-  setPlan: (plan) => set({ plan }),
+    setKB: (kbFacts, kbNewFacts) => set({ kbFacts, kbNewFacts }),
 
-  setActionUtilities: (actionUtilities) => set({ actionUtilities }),
+    setPlan: (plan) => set({ plan }),
 
-  reset: () =>
-    set({
-      knownCells: {},
-      beliefs: {},
-      lastPerceived: [],
-      sensorReadings: [],
-      loopPhase: 'idle',
-      kbFacts: [],
-      kbNewFacts: [],
-      plan: EMPTY_PLAN,
-      actionUtilities: [],
-    }),
-}));
+    setActionUtilities: (actionUtilities) => set({ actionUtilities }),
+
+    reset: () => set(INITIAL_STATE),
+  }));
+}
+
+/** Instancia principal (agente A*) */
+export const useAgentStore = createAgentStore();

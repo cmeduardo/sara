@@ -249,3 +249,97 @@
 - **Visualización en BrainPanel:** Sección "Utilidad" muestra las tres acciones evaluadas ordenadas por utilidad descendente con barra de progreso relativa. La acción elegida (top) se marca con ▶. El campo "Modo" en Plan STRIPS refleja la acción activa: rescatar / recargar / explorar.
 
 - **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 16 (Toma de decisiones bajo incertidumbre), cap. 2.4 (Agentes basados en utilidad).
+
+---
+
+### 2026-05-23 — Fase 9: Aprendizaje por refuerzo (Q-Learning)
+
+**Decisión:** Q-Learning tabular para la selección de tipo de acción (rescue/explore/recharge), combinado con la función de utilidad existente. El agente mejora sus decisiones con la experiencia acumulada entre episodios.
+
+- **Alternativas consideradas:**
+  - FSM con reglas adaptativas: no aprende, solo cambia estado por umbral fijo.
+  - Q-Learning puro (sin utilidad): empieza desde cero, episodios iniciales muy pobres — malo para demo.
+  - Redes neuronales (DQN): excesivo para 18 estados; Q-tabla suficiente y más interpretable.
+  - **Q-Learning + función de utilidad (elegido):** La utilidad garantiza buen comportamiento desde el episodio 1; el Q refina con experiencia.
+
+- **Espacio de estados:** 18 estados discretizados (2 × 3 × 3):
+  - `hasVictim` ∈ {0, 1}: ¿hay VictimAt(·) en la KB?
+  - `energyBucket` ∈ {0=low<30%, 1=mid 30-70%, 2=high>70%}
+  - `exploredBucket` ∈ {0=low<33%, 1=mid 33-66%, 2=high>66%}
+  - Clave de estado: `"${hasVictim}_${energyBucket}_${exploredBucket}"`
+
+- **Selección de acción (ε-greedy combinado):**
+  - `score(a) = utility(a) + 0.5 × Q(s, a)`
+  - Con probabilidad ε: acción aleatoria (exploración)
+  - Con probabilidad 1-ε: `argmax score(a)` (explotación)
+
+- **Función de recompensa (retrasada por período):**
+  - `R = ΔRescatados × 100 + ΔExploradas × 5 + ΔPasos × (−1)`
+  - Muerte: `R += −50` (bonus negativo único)
+  - La recompensa se calcula al inicio de la siguiente decisión, cubriendo todo el período desde la decisión anterior.
+
+- **Actualización Q (ecuación de Bellman):**
+  `Q(s,a) ← Q(s,a) + α × [R + γ × max_a'Q(s',a') − Q(s,a)]`
+  - `α = 0.1` (decae ×0.999 por episodio → min 0.01)
+  - `γ = 0.9`
+  - `ε = 0.3` (decae ×0.995 por episodio → min 0.01)
+
+- **Persistencia entre episodios:** `learningStore.ts` no se reinicia con "Reiniciar". El botón Reiniciar llama `nextEpisode(rescued, steps, survived)` que registra el resultado y decae ε y α. La Q-table acumula experiencia indefinidamente.
+
+- **Puntos de decisión en PlanController:**
+  1. Plan exhausto (currentIdx fuera de rango): `decideNextPlan()` actualiza Q y selecciona acción.
+  2. Plan fallido (estado 'failed'): ídem.
+  3. Post-rescate: después de eliminar una víctima, `decideNextPlan()` elige la siguiente acción.
+  4. Muerte por energía: actualiza Q con penalización de muerte y llama `nextEpisode()`.
+
+- **Visualización en BrainPanel:** Sección "Q-Learning" muestra:
+  - Parámetros actuales: ε, α, episodio, estados visitados (n/18)
+  - Estado Q actual (clave discretizada)
+  - Q-values del estado actual con barras relativas por acción
+  - Historial de últimos 20 episodios (rescatados, pasos, supervivencia)
+
+- **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 22 (Aprendizaje por refuerzo), sección 22.3 (Q-learning tabular).
+
+---
+
+### 2026-05-23 — Fase 10: Entrenamiento Turbo + Gráficas de Convergencia
+
+**Decisión:** Modo de entrenamiento headless que ejecuta N episodios completos de forma síncrona (sin React, sin canvas, sin delays) para demostrar la convergencia del Q-Learning en segundos en lugar de minutos.
+
+- **Alternativas consideradas:**
+  - Web Worker: aislamiento real de hilos, pero requiere serialización de Q-table y coordinación compleja.
+  - `setInterval` con un episodio por tick: demasiado lento, el render del canvas agrega latencia por paso.
+  - **Lotes con `setTimeout(0)` (elegido):** El runner headless `runTurboEpisode` es puro (no toca React ni Zustand), se llama sincrónicamente en lotes de 10 episodios dentro de un `async` con `await new Promise(r => setTimeout(r, 0))` entre lotes. Esto cede el control al browser para actualizar la barra de progreso sin bloquear la pestaña.
+
+- **Arquitectura del runner headless (`src/lib/agent/turbo.ts`):**
+  - Recibe: `initialGrid`, `agentStart`, `qTable`, `epsilon`, `alpha`
+  - Estado cognitivo fresco por episodio (knownCells vacío, kbFacts vacío, beliefs vacío)
+  - Espeja exactamente la lógica de `PlanController.tsx` con datos puros
+  - Máximo `DEFAULTS.maxStepsPerEpisode` (500) ticks por episodio
+  - Retorna: `rescued`, `steps`, `survived`, `qTable` actualizada
+  - Importa: `runAgentCycle`, `applyMoveAction`, `maybeReplan`, `buildPlan/ExplorationPlan/MovePlan`, `getCell/setCell`, `tickDynamism`, `evaluateActions`, `extractState/selectAction/updateQ`
+
+- **Estado de turbo en `learningStore`:**
+  - `isRunningTurbo: boolean` — activa la barra de progreso y deshabilita botones
+  - `turboProgress: { current, total } | null` — actualizado cada lote para el porcentaje
+  - `applyTurboResults(results, finalQTable, finalEpsilon, finalAlpha)` — integra todos los resultados al finalizar, guarda hasta 200 registros en historial (vs 20 del modo interactivo)
+
+- **Diferencia turbo vs interactivo (Reiniciar):**
+  - Turbo: conocimiento vacío por episodio (estándar RL — el agente aprende independientemente del mapa)
+  - Reiniciar interactivo: conserva KB/knownCells (útil para demostrar transferencia de conocimiento)
+  - Esto hace que turbo sea más exigente y la convergencia más significativa
+
+- **Gráficas de convergencia (Recharts):**
+  - Se renderizan cuando `episodeHistory.length > 1`
+  - `LineChart` rescatados/episodio: muestra si el agente mejora su tasa de rescate con el tiempo
+  - `LineChart` pasos/episodio: muestra eficiencia (menos pasos = política más directa)
+  - Sin dots (dot={false}) para no saturar con 100+ episodios
+  - Paleta blueprint: victim color para rescatados, accent-info para pasos, sin gradientes ni sombras
+
+- **Resultado esperado tras 100 episodios turbo:**
+  - Q-values explore y recharge dominantes (el mapa se explora antes de encontrar víctimas)
+  - ε decaído de 0.300 a ~0.230 (menos exploración aleatoria, más explotación)
+  - α decaído de 0.100 a ~0.095 (tasa de aprendizaje más conservadora)
+  - 11-18/18 estados visitados según el comportamiento emergente
+
+- **Referencia:** Sutton & Barto, "Reinforcement Learning: An Introduction" 2ª ed., cap. 6 (TD Learning), sección 6.5 (Q-learning: Off-policy TD Control).
