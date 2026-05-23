@@ -113,18 +113,20 @@ export function MapLibrary() {
         <p className="text-blueprint-text-dim text-xs font-mono uppercase tracking-widest mb-2">
           Guardar
         </p>
-        <div className="flex gap-1">
+        
+        {/* Input y botón en columna para evitar desbordamiento */}
+        <div className="flex flex-col gap-1">
           <input
             type="text"
             value={saveName}
             onChange={(e) => setSaveName(e.target.value)}
             placeholder="nombre del mapa"
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-            className="flex-1 bg-blueprint-bg border border-blueprint-border text-blueprint-text text-xs font-mono px-2 py-1 rounded-sm outline-none focus:border-blueprint-text-dim placeholder:text-blueprint-text-dim"
+            className="w-full bg-blueprint-bg border border-blueprint-border text-blueprint-text text-xs font-mono px-2 py-1 rounded-sm outline-none focus:border-blueprint-text-dim placeholder:text-blueprint-text-dim"
           />
           <button
             onClick={handleSave}
-            className="px-3 py-1 text-xs font-mono border border-blueprint-accent-success text-blueprint-accent-success hover:bg-blueprint-accent-success hover:text-blueprint-bg rounded-sm transition-colors"
+            className="w-full py-1 text-xs font-mono border border-blueprint-accent-success text-blueprint-accent-success hover:bg-blueprint-accent-success hover:text-blueprint-bg rounded-sm transition-colors"
           >
             Guardar
           </button>
@@ -158,10 +160,10 @@ export function MapLibrary() {
         )}
       </div>
 
-      {/* Lista de mapas guardados */}
-      <div className="border border-blueprint-border bg-blueprint-bg-elevated p-3 rounded-sm flex flex-col gap-2 flex-1 overflow-hidden">
+      {/* Lista de mapas guardados — min-h-0 es crítico para que overflow-y-auto funcione en flex */}
+      <div className="border border-blueprint-border bg-blueprint-bg-elevated p-3 rounded-sm flex flex-col gap-2 flex-1 min-h-0">
         <p className="text-blueprint-text-dim text-xs font-mono uppercase tracking-widest shrink-0">
-          Mapas guardados ({savedMaps.length})
+          Mapas ({savedMaps.length})
         </p>
 
         {savedMaps.length === 0 && (
@@ -170,7 +172,8 @@ export function MapLibrary() {
           </p>
         )}
 
-        <div className="flex flex-col gap-1 overflow-y-auto">
+        {/* min-h-0 en el scroll container para que el padre flex lo limite */}
+        <div className="flex flex-col gap-1 overflow-y-auto min-h-0">
           {savedMaps.map((map) => (
             <div
               key={map.id}
@@ -180,43 +183,46 @@ export function MapLibrary() {
                   : 'border-blueprint-border hover:border-blueprint-text-dim'
               }`}
             >
-              <div className="flex items-start justify-between gap-1 mb-1">
-                <span className="text-blueprint-text text-xs font-mono truncate leading-tight">
+              {/* Nombre + tamaño en una línea */}
+              <div className="flex items-baseline justify-between gap-1 mb-0.5">
+                <span className="text-blueprint-text text-xs font-mono truncate leading-tight min-w-0">
                   {map.name}
                 </span>
                 <span className="text-blueprint-text-dim text-xs font-mono shrink-0">
-                  {map.size}×{map.size}
+                  {map.size}²
                 </span>
               </div>
 
-              <p className="text-blueprint-text-dim text-xs font-mono mb-2">
+              {/* Fecha compacta */}
+              <p className="text-blueprint-text-dim text-xs font-mono mb-1.5">
                 {dateLabel(map.createdAt)}
               </p>
 
-              <div className="flex gap-1 flex-wrap">
+              {/* Botones en 2 filas de 2 — evita desbordamiento horizontal */}
+              <div className="grid grid-cols-2 gap-1">
                 <button
                   onClick={() => handleLoad(map)}
-                  className="px-2 py-0.5 text-xs font-mono border border-blueprint-accent-info text-blueprint-accent-info hover:bg-blueprint-accent-info hover:text-blueprint-bg rounded-sm transition-colors"
+                  className="py-0.5 text-xs font-mono border border-blueprint-accent-info text-blueprint-accent-info hover:bg-blueprint-accent-info hover:text-blueprint-bg rounded-sm transition-colors"
                 >
                   Editar
                 </button>
                 <button
                   onClick={() => handleLoadToSim(map)}
-                  className="px-2 py-0.5 text-xs font-mono border border-blueprint-accent-data text-blueprint-accent-data hover:bg-blueprint-accent-data hover:text-blueprint-bg rounded-sm transition-colors"
+                  className="py-0.5 text-xs font-mono border border-blueprint-accent-data text-blueprint-accent-data hover:bg-blueprint-accent-data hover:text-blueprint-bg rounded-sm transition-colors"
                 >
                   Simular
                 </button>
                 <button
                   onClick={() => handleExport(map)}
-                  className="px-2 py-0.5 text-xs font-mono border border-blueprint-border text-blueprint-text-dim hover:text-blueprint-text rounded-sm transition-colors"
+                  className="py-0.5 text-xs font-mono border border-blueprint-border text-blueprint-text-dim hover:text-blueprint-text rounded-sm transition-colors"
                 >
                   JSON
                 </button>
                 <button
                   onClick={() => handleDelete(map.id)}
-                  className="px-2 py-0.5 text-xs font-mono border border-blueprint-accent-danger text-blueprint-accent-danger hover:bg-blueprint-accent-danger hover:text-blueprint-bg rounded-sm transition-colors"
+                  className="py-0.5 text-xs font-mono border border-blueprint-accent-danger text-blueprint-accent-danger hover:bg-blueprint-accent-danger hover:text-blueprint-bg rounded-sm transition-colors"
                 >
-                  ✕
+                  Borrar
                 </button>
               </div>
             </div>
