@@ -69,7 +69,7 @@ export default function HomePage() {
 
             {/* Hint teclado */}
             <p className="text-blueprint-text-dim text-[10px] font-mono">
-              ↑ ↓ ← → para mover el agente
+              ↑ ↓ ← → exploración manual (inactivo en simulación)
             </p>
           </div>
 

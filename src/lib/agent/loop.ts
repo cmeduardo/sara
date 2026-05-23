@@ -7,6 +7,7 @@ import { DEFAULTS } from '@/config/defaults';
 import { perceive, victimSensor, dangerBreezeSensor } from './perception';
 import { updateKnownCells } from './memory';
 import { updateKBFromPerception } from '@/lib/knowledge/inference';
+import { updateBeliefs } from '@/lib/uncertainty/bayes';
 import { getCell, isInBounds } from '@/lib/environment/grid';
 
 export interface LoopResult {
@@ -18,21 +19,24 @@ export interface LoopResult {
   kbFacts: string[];
   /** Hechos nuevos del turno (percepción + inferidos) para resaltado en UI */
   kbNewFacts: string[];
+  /** Creencias bayesianas actualizadas: "x,y" → P(danger) */
+  updatedBeliefs: Record<string, number>;
   /** Acción decidida. Null hasta Fase 8 (utilidad) / Fase 9 (Q-learning). */
   decidedAction: Action | null;
 }
 
 /**
  * Ejecuta un ciclo completo del agente sobre el estado actual del mundo.
- * Fases implementadas: percepción (3), memoria (3), KB + inferencia (4).
- * Fases 5-9 se implementarán en sus respectivas fases.
+ * Fases implementadas: percepción (3), memoria (3), KB + inferencia (4), creencias bayesianas (7).
+ * Fases 8-9 se implementarán en sus respectivas fases.
  */
 export function runAgentCycle(
   grid: Grid,
   agentState: AgentState,
   knownCells: KnownCellRecord,
   kbFacts: string[],
-  config: typeof DEFAULTS
+  config: typeof DEFAULTS,
+  currentBeliefs: Record<string, number> = {},
 ): LoopResult {
   // ── 1. Percibir ─────────────────────────────────────────────────────────────
   const perceived = perceive(grid, agentState.pos, config.agentVisionRadius);
@@ -65,9 +69,20 @@ export function runAgentCycle(
     grid.length,
   );
 
-  // ── 5. Planificar (STRIPS) — Fase 6 ─────────────────────────────────────────
-  // ── 6. Decidir (utilidad / Q-learning) — Fases 8-9 ──────────────────────────
-  // ── 7. Actuar — el llamador aplica la acción al mundo ───────────────────────
+  // ── 5. Actualizar creencias bayesianas (Fase 7) ──────────────────────────────
+  const updatedBeliefs = updateBeliefs(
+    currentBeliefs,
+    agentState.pos,
+    sensorReading.breezeDetected,
+    updatedKnownCells,
+    updatedKBFacts,
+    grid.length,
+    config.sensorNoise,
+  );
+
+  // ── 6. Planificar (STRIPS) — Fase 6 ─────────────────────────────────────────
+  // ── 7. Decidir (utilidad / Q-learning) — Fases 8-9 ──────────────────────────
+  // ── 8. Actuar — el llamador aplica la acción al mundo ───────────────────────
 
   return {
     phase: 'perceiving',
@@ -76,6 +91,7 @@ export function runAgentCycle(
     sensorReading,
     kbFacts: updatedKBFacts,
     kbNewFacts,
+    updatedBeliefs,
     decidedAction: null,
   };
 }
@@ -107,8 +123,14 @@ export function applyMoveAction(
   const targetCell = getCell(grid, newPos);
   if (targetCell?.type === 'obstacle') return null;
 
-  const newEnergy = agentState.energy - DEFAULTS.moveCost;
-  if (newEnergy < 0) return null;
+  let newEnergy = agentState.energy - DEFAULTS.moveCost;
+  // Sin energía suficiente → agente muere (no retorna null para que el caller actualice el estado)
+  if (newEnergy < 0) return { energy: 0, alive: false };
+
+  // Recarga al pisar estación
+  if (targetCell?.type === 'station') {
+    newEnergy = DEFAULTS.initialEnergy;
+  }
 
   // Posible daño al pisar celda de peligro
   let hpLoss = 0;

@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useEditorStore } from '@/store/editorStore';
 import { useWorldStore } from '@/store/worldStore';
+import { useAgentStore } from '@/store/agentStore';
 import {
   saveMap,
   deleteMap,
@@ -10,8 +12,10 @@ import {
   importMapFromJSON,
 } from '@/lib/persistence/maps';
 import type { SavedMap } from '@/types/persistence';
+import type { Grid } from '@/types/world';
 
 export function MapLibrary() {
+  const router = useRouter();
   const [saveName, setSaveName] = useState('');
   const [importError, setImportError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -21,7 +25,8 @@ export function MapLibrary() {
     savedMaps, loadSavedMap, refreshSavedMaps,
   } = useEditorStore();
 
-  const { setGrid: setWorldGrid, setGridSize: setWorldGridSize, updateAgentState } = useWorldStore();
+  const { loadGrid, setPlan: setWorldPlan } = useWorldStore();
+  const { reset: resetAgent } = useAgentStore();
 
   // Cargar lista al montar
   useEffect(() => {
@@ -47,12 +52,13 @@ export function MapLibrary() {
     loadSavedMap(map);
   }
 
-  // ─── Cargar en simulación (worldStore) ──────────────────────────────────────
+  // ─── Cargar en simulación (worldStore) y navegar ────────────────────────────
 
   function handleLoadToSim(map: SavedMap) {
-    setWorldGrid(map.cells as Parameters<typeof setWorldGrid>[0]);
-    setWorldGridSize(map.size);
-    updateAgentState({ pos: map.agentStart, energy: 100, hp: 100, rescued: 0, steps: 0, alive: true });
+    loadGrid(map.cells as Grid, map.size, map.agentStart);
+    setWorldPlan([]);
+    resetAgent();
+    router.push('/');
   }
 
   // ─── Eliminar ───────────────────────────────────────────────────────────────

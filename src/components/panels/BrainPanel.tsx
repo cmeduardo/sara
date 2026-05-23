@@ -5,9 +5,10 @@
 import { useState } from 'react';
 import { useAgentStore } from '@/store/agentStore';
 import { useWorldStore } from '@/store/worldStore';
+import { DEFAULTS } from '@/config/defaults';
 import { recentKnownCells, memorySummary } from '@/lib/agent/memory';
 import { parsePredicateKey, PREDICATE_KINDS, type PredicateKind } from '@/lib/knowledge/predicates';
-import { buildPlan, EMPTY_PLAN, planRemainingPath, knownVictimPositions } from '@/lib/planning/strips';
+import { EMPTY_PLAN, knownVictimPositions } from '@/lib/planning/strips';
 import { useUIStore } from '@/store/uiStore';
 
 function CellTypeBadge({ type }: { type: string }) {
@@ -38,10 +39,13 @@ const KIND_COLOR: Record<PredicateKind, string> = {
 export function BrainPanel() {
   const { knownCells, beliefs, lastPerceived, sensorReadings, loopPhase, kbFacts, kbNewFacts, plan, setPlan } =
     useAgentStore();
-  const { agentState, gridSize, setPlan: setWorldPlan } = useWorldStore();
+  const { agentState, agentStart, initialGrid, setPlan: setWorldPlan, updateAgentState, setGrid } = useWorldStore();
   const { showPlan, togglePlan } = useUIStore();
 
   const [kbFilter, setKbFilter] = useState<PredicateKind | null>(null);
+
+  const isRescueMission = plan.goalPos !== null
+    && kbFacts.includes(`VictimAt(${plan.goalPos.x},${plan.goalPos.y})`);
 
   const recent = recentKnownCells(knownCells, agentState.steps, 15);
   const summary = memorySummary(knownCells);
@@ -70,8 +74,15 @@ export function BrainPanel() {
       </section>
 
       {/* Estado del agente */}
-      <section className="border border-blueprint-border bg-blueprint-bg-elevated p-2 rounded-sm">
-        <p className="text-blueprint-text-dim uppercase tracking-widest text-[10px] mb-1.5">Agente</p>
+      <section className={`border p-2 rounded-sm ${!agentState.alive ? 'border-blueprint-accent-danger bg-blueprint-accent-danger/10' : 'border-blueprint-border bg-blueprint-bg-elevated'}`}>
+        <div className="flex items-center justify-between mb-1.5">
+          <p className="text-blueprint-text-dim uppercase tracking-widest text-[10px]">Agente</p>
+          {!agentState.alive && (
+            <span className="text-blueprint-accent-danger text-[10px] font-mono uppercase tracking-widest">
+              ✗ muerto
+            </span>
+          )}
+        </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
           <span className="text-blueprint-text-muted">Pos</span>
           <span className="text-blueprint-text">({agentState.pos.x},{agentState.pos.y})</span>
@@ -108,6 +119,14 @@ export function BrainPanel() {
           }>
             {plan.status}
           </span>
+          {plan.status === 'executing' && (
+            <>
+              <span className="text-blueprint-text-muted">Modo</span>
+              <span className={isRescueMission ? 'text-blueprint-victim' : 'text-blueprint-accent-info'}>
+                {isRescueMission ? 'rescatar' : 'explorar'}
+              </span>
+            </>
+          )}
           {plan.goalPos && (
             <>
               <span className="text-blueprint-text-muted">Objetivo</span>
@@ -134,22 +153,9 @@ export function BrainPanel() {
         <div className="flex gap-1.5 mt-0.5">
           <button
             onClick={() => {
-              const newPlan = buildPlan({
-                agentPos: agentState.pos,
-                kbFacts,
-                knownCells,
-                beliefs,
-                gridSize,
-                previousReplans: 0,
-              });
-              if (newPlan) {
-                setPlan(newPlan);
-                setWorldPlan(planRemainingPath(newPlan));
-                if (!showPlan) togglePlan();
-              } else {
-                setPlan({ ...EMPTY_PLAN, status: 'failed' });
-                setWorldPlan([]);
-              }
+              setPlan({ ...EMPTY_PLAN, status: 'executing' });
+              setWorldPlan([]);
+              if (!showPlan) togglePlan();
             }}
             disabled={plan.status === 'executing'}
             className="flex-1 text-[10px] font-mono px-2 py-1 border rounded-sm transition-colors
@@ -157,7 +163,7 @@ export function BrainPanel() {
               hover:bg-blueprint-accent-info hover:text-blueprint-bg
               disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Planificar
+            Iniciar
           </button>
           <button
             onClick={() => {
@@ -174,6 +180,29 @@ export function BrainPanel() {
             Detener
           </button>
         </div>
+
+        {/* Reiniciar: restaura mapa y agente, conserva conocimiento */}
+        <button
+          onClick={() => {
+            setPlan(EMPTY_PLAN);
+            setWorldPlan([]);
+            if (showPlan) togglePlan();
+            setGrid(initialGrid);
+            updateAgentState({
+              pos: agentStart,
+              energy: DEFAULTS.initialEnergy,
+              hp: DEFAULTS.initialHP,
+              steps: 0,
+              rescued: 0,
+              alive: true,
+            });
+          }}
+          className="w-full text-[10px] font-mono px-2 py-1 border rounded-sm transition-colors
+            border-blueprint-accent-warning text-blueprint-accent-warning
+            hover:bg-blueprint-accent-warning hover:text-blueprint-bg"
+        >
+          Reiniciar (conservar conocimiento)
+        </button>
       </section>
 
       {/* Sensores — última lectura */}

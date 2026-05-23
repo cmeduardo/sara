@@ -8,8 +8,9 @@ import { useAgentStore } from '@/store/agentStore';
 import { DEFAULTS } from '@/config/defaults';
 import { runAgentCycle, applyMoveAction } from '@/lib/agent/loop';
 import { maybeReplan } from '@/lib/planning/replan';
-import { buildPlan, EMPTY_PLAN, planRemainingPath } from '@/lib/planning/strips';
-import { setCell } from '@/lib/environment/grid';
+import { buildPlan, EMPTY_PLAN, planRemainingPath, buildExplorationPlan } from '@/lib/planning/strips';
+import { getCell, setCell } from '@/lib/environment/grid';
+import { tickDynamism } from '@/lib/environment/dynamism';
 import type { Direction } from '@/types/world';
 
 const STEP_INTERVAL_MS = 450;
@@ -29,17 +30,29 @@ function dirBetween(from: { x: number; y: number }, to: { x: number; y: number }
 function executePlanStep() {
   const { grid, agentState, setAgentLastDir, updateAgentState, setPlan: setWorldPlan, setGrid } =
     useWorldStore.getState();
-  const { knownCells, kbFacts, plan, updateMemory, addSensorReading, setKB, setLoopPhase, setPlan } =
+  const { knownCells, kbFacts, beliefs, plan, updateMemory, addSensorReading, setKB, setBeliefs, setLoopPhase, setPlan } =
     useAgentStore.getState();
 
   if (!agentState.alive) return;
   if (plan.status !== 'executing') return;
 
+  // ── Dinamismo del entorno cada N pasos ────────────────────────────────────
+  if (
+    DEFAULTS.dynamism.enabled &&
+    agentState.steps > 0 &&
+    agentState.steps % DEFAULTS.dynamism.tickEveryNSteps === 0
+  ) {
+    const dynGrid = tickDynamism(grid, DEFAULTS.dynamism);
+    if (dynGrid !== grid) setGrid(dynGrid);
+  }
+
   // ── Ciclo cognitivo ────────────────────────────────────────────────────────
   setLoopPhase('perceiving');
-  const result = runAgentCycle(grid, agentState, knownCells, kbFacts, DEFAULTS);
+  const result = runAgentCycle(grid, agentState, knownCells, kbFacts, DEFAULTS, beliefs);
   updateMemory(result.perceived, agentState.steps);
   addSensorReading(result.sensorReading);
+  setLoopPhase('updating_beliefs');
+  setBeliefs(result.updatedBeliefs);
 
   // ── Replanificación si el próximo paso quedó inválido ──────────────────────
   setLoopPhase('planning');
@@ -52,31 +65,45 @@ function executePlanStep() {
     agentPos: agentState.pos,
     kbFacts: freshKBFacts,
     knownCells: freshKnownCells,
-    beliefs: {},
+    beliefs: result.updatedBeliefs,
     gridSize: grid.length,
   });
 
   setKB(freshKBFacts, result.kbNewFacts);
 
+  // Plan fallido → intentar explorar antes de rendirse
   if (validPlan.status === 'failed') {
-    setPlan({ ...validPlan, status: 'failed' });
-    setWorldPlan([]);
+    const planInput = {
+      agentPos: agentState.pos,
+      kbFacts: freshKBFacts,
+      knownCells: freshKnownCells,
+      beliefs: result.updatedBeliefs,
+      gridSize: grid.length,
+      previousReplans: validPlan.replansCount,
+    };
+    const recovery = buildPlan(planInput) ?? buildExplorationPlan(planInput);
+    // Mantener executing vacío para seguir percibiendo si no hay recuperación
+    setPlan(recovery ?? { ...EMPTY_PLAN, status: 'executing' });
+    setWorldPlan(recovery ? planRemainingPath(recovery) : []);
     setLoopPhase('idle');
     return;
   }
 
   const step = validPlan.steps[validPlan.currentIdx];
   if (!step) {
-    // Plan vacío o exhausto → buscar siguiente víctima
-    const nextPlan = buildPlan({
+    // Plan exhausto → rescatar, explorar o seguir esperando cambios del entorno
+    const planInput = {
       agentPos: agentState.pos,
       kbFacts: freshKBFacts,
       knownCells: freshKnownCells,
-      beliefs: {},
+      beliefs: result.updatedBeliefs,
       gridSize: grid.length,
       previousReplans: validPlan.replansCount,
-    });
-    setPlan(nextPlan ?? { ...EMPTY_PLAN, status: 'complete' });
+    };
+    const nextPlan = buildPlan(planInput) ?? buildExplorationPlan(planInput);
+    // Si no hay nada que hacer, mantener 'executing' con pasos vacíos para
+    // seguir percibiendo cambios dinámicos del entorno
+    setPlan(nextPlan ?? { ...EMPTY_PLAN, status: 'executing' });
     setWorldPlan(nextPlan ? planRemainingPath(nextPlan) : []);
     setLoopPhase('idle');
     return;
@@ -92,6 +119,21 @@ function executePlanStep() {
       if (newState) {
         setAgentLastDir(dir);
         updateAgentState(newState);
+      } else {
+        // Camino bloqueado (obstáculo descubierto) — replanificar
+        const planInput = {
+          agentPos: agentState.pos,
+          kbFacts: freshKBFacts,
+          knownCells: freshKnownCells,
+          beliefs: result.updatedBeliefs,
+          gridSize: grid.length,
+          previousReplans: validPlan.replansCount + 1,
+        };
+        const replan = buildPlan(planInput) ?? buildExplorationPlan(planInput);
+        setPlan(replan ?? { ...EMPTY_PLAN, status: 'executing' });
+        setWorldPlan(replan ? planRemainingPath(replan) : []);
+        setLoopPhase('idle');
+        return;
       }
     }
     const advanced = { ...validPlan, currentIdx: validPlan.currentIdx + 1 };
@@ -100,24 +142,45 @@ function executePlanStep() {
   } else {
     // ── Ejecutar rescate ─────────────────────────────────────────────────────
     const { x, y } = step.to;
-    // Efecto: eliminar víctima del grid real + retractar VictimAt de la KB
+    const targetCell = getCell(grid, { x, y });
+
+    // Si la víctima ya no está (se movió por dinamismo), retractar y replanear
+    if (targetCell?.type !== 'victim') {
+      const factsWithout = freshKBFacts.filter((f) => f !== `VictimAt(${x},${y})`);
+      setKB(factsWithout, []);
+      const planInput = {
+        agentPos: agentState.pos,
+        kbFacts: factsWithout,
+        knownCells: freshKnownCells,
+        beliefs: result.updatedBeliefs,
+        gridSize: grid.length,
+        previousReplans: validPlan.replansCount + 1,
+      };
+      const replan = buildPlan(planInput) ?? buildExplorationPlan(planInput);
+      setPlan(replan ?? { ...EMPTY_PLAN, status: 'executing' });
+      setWorldPlan(replan ? planRemainingPath(replan) : []);
+      setLoopPhase('idle');
+      return;
+    }
+
+    // Eliminar víctima del grid + retractar VictimAt de la KB
     const updatedGrid = setCell(grid, { x, y }, { type: 'empty' });
     setGrid(updatedGrid);
     const factsAfterRescue = freshKBFacts.filter((f) => f !== `VictimAt(${x},${y})`);
     setKB(factsAfterRescue, []);
     updateAgentState({ rescued: agentState.rescued + 1 });
 
-    // Avanzar paso y buscar siguiente víctima
-    const afterRescue = { ...validPlan, currentIdx: validPlan.currentIdx + 1 };
-    const nextPlan = buildPlan({
+    // Rescatar siguiente víctima o explorar más
+    const planInput = {
       agentPos: agentState.pos,
       kbFacts: factsAfterRescue,
       knownCells: freshKnownCells,
-      beliefs: {},
+      beliefs: result.updatedBeliefs,
       gridSize: grid.length,
       previousReplans: validPlan.replansCount,
-    });
-    setPlan(nextPlan ?? { ...afterRescue, status: 'complete' });
+    };
+    const nextPlan = buildPlan(planInput) ?? buildExplorationPlan(planInput);
+    setPlan(nextPlan ?? { ...EMPTY_PLAN, status: 'executing' });
     setWorldPlan(nextPlan ? planRemainingPath(nextPlan) : []);
   }
 
@@ -127,9 +190,12 @@ function executePlanStep() {
 export function PlanController() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { plan } = useAgentStore();
+  const { agentState } = useWorldStore();
+
+  const shouldRun = agentState.alive && plan.status === 'executing';
 
   useEffect(() => {
-    if (plan.status === 'executing') {
+    if (shouldRun) {
       if (!intervalRef.current) {
         intervalRef.current = setInterval(executePlanStep, STEP_INTERVAL_MS);
       }
@@ -145,7 +211,7 @@ export function PlanController() {
         intervalRef.current = null;
       }
     };
-  }, [plan.status]);
+  }, [shouldRun]);
 
   return null;
 }

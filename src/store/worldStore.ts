@@ -7,16 +7,23 @@ import { DEFAULTS } from '@/config/defaults';
 
 interface WorldStore {
   grid: Grid;
+  /** Copia inmutable del grid al inicio del episodio — usada por Reiniciar */
+  initialGrid: Grid;
   gridSize: GridSize;
   agentState: AgentState;
   agentLastDir: Direction;
+  /** Posición inicial del agente en el episodio actual */
+  agentStart: Position;
   /** Secuencia de posiciones del plan actual (poblada en Fase 6) */
   plan: Position[];
 
   setGrid: (grid: Grid) => void;
+  /** Carga un grid nuevo y lo registra como estado inicial del episodio */
+  loadGrid: (grid: Grid, size: GridSize, agentStart: Position) => void;
   setGridSize: (size: GridSize) => void;
   updateAgentState: (partial: Partial<AgentState>) => void;
   setAgentLastDir: (dir: Direction) => void;
+  setAgentStart: (pos: Position) => void;
   setPlan: (plan: Position[]) => void;
   initHardcoded: () => void;
 }
@@ -64,25 +71,42 @@ const initialAgentState: AgentState = {
   alive: true,
 };
 
+const _hardcoded = buildHardcodedGrid();
+
 export const useWorldStore = create<WorldStore>((set) => ({
-  grid: buildHardcodedGrid(),
+  grid: _hardcoded,
+  initialGrid: _hardcoded,
   gridSize: 12,
   agentState: initialAgentState,
   agentLastDir: 'N',
+  agentStart: initialAgentState.pos,
   plan: [],
 
   setGrid: (grid) => set({ grid }),
+  loadGrid: (grid, size, agentStart) =>
+    set({
+      grid,
+      initialGrid: grid,
+      gridSize: size,
+      agentState: { ...initialAgentState, pos: agentStart },
+      agentLastDir: 'N',
+      agentStart,
+      plan: [],
+    }),
   setGridSize: (size) => set({ gridSize: size }),
   updateAgentState: (partial) =>
     set((state) => ({ agentState: { ...state.agentState, ...partial } })),
   setAgentLastDir: (dir) => set({ agentLastDir: dir }),
+  setAgentStart: (pos) => set({ agentStart: pos }),
   setPlan: (plan) => set({ plan }),
   initHardcoded: () =>
     set({
-      grid: buildHardcodedGrid(),
+      grid: _hardcoded,
+      initialGrid: _hardcoded,
       gridSize: 12,
       agentState: initialAgentState,
       agentLastDir: 'N',
+      agentStart: initialAgentState.pos,
       plan: [],
     }),
 }));

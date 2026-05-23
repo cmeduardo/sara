@@ -97,16 +97,21 @@ export function buildPlan(input: PlanInput): Plan | null {
   const goal = selectNearestVictim(agentPos, kbFacts);
   if (!goal) return null;
 
+  // El agente ya está sobre la víctima — rescatar sin moverse
+  if (goal.x === agentPos.x && goal.y === agentPos.y) {
+    return {
+      steps: [{ kind: 'RESCUE', to: goal }],
+      currentIdx: 0,
+      goalPos: goal,
+      status: 'executing',
+      replansCount: previousReplans,
+    };
+  }
+
   const result = astar({ start: agentPos, goal, knownCells, beliefs, gridSize });
 
   if (!result.found || result.path.length < 2) {
-    return {
-      steps: [],
-      currentIdx: 0,
-      goalPos: goal,
-      status: 'failed',
-      replansCount: previousReplans,
-    };
+    return null;
   }
 
   return {
@@ -116,6 +121,67 @@ export function buildPlan(input: PlanInput): Plan | null {
     status: 'executing',
     replansCount: previousReplans,
   };
+}
+
+// ── Plan de exploración ───────────────────────────────────────────────────────
+
+/**
+ * Plan de exploración frontera: A* hacia la celda no explorada más cercana.
+ * "Frontera" = celdas adyacentes a celdas conocidas que aún no han sido visitadas.
+ * Devuelve null si toda la cuadrícula está explorada (no hay frontera alcanzable).
+ */
+export function buildExplorationPlan(input: PlanInput): Plan | null {
+  const { agentPos, knownCells, beliefs, gridSize, previousReplans = 0 } = input;
+
+  const frontierSet = new Set<string>();
+
+  if (Object.keys(knownCells).length === 0) {
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]] as [number,number][]) {
+      const nx = agentPos.x + dx, ny = agentPos.y + dy;
+      if (nx >= 0 && ny >= 0 && nx < gridSize && ny < gridSize) {
+        frontierSet.add(`${nx},${ny}`);
+      }
+    }
+  } else {
+    for (const key of Object.keys(knownCells)) {
+      const [x, y] = key.split(',').map(Number) as [number, number];
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]] as [number,number][]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= gridSize || ny >= gridSize) continue;
+        const nk = `${nx},${ny}`;
+        if (!knownCells[nk]) frontierSet.add(nk);
+      }
+    }
+  }
+
+  if (frontierSet.size === 0) return null;
+
+  const candidates = [...frontierSet]
+    .map((k) => {
+      const [x, y] = k.split(',').map(Number) as [number, number];
+      return { pos: { x, y }, dist: Math.abs(x - agentPos.x) + Math.abs(y - agentPos.y) };
+    })
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 10);
+
+  for (const { pos: target } of candidates) {
+    const result = astar({ start: agentPos, goal: target, knownCells, beliefs, gridSize });
+    if (result.found && result.path.length >= 2) {
+      const steps: PlanStep[] = [];
+      for (let i = 0; i < result.path.length - 1; i++) {
+        steps.push({ kind: 'MOVE', from: result.path[i]!, to: result.path[i + 1]! });
+      }
+      return {
+        steps,
+        currentIdx: 0,
+        goalPos: target,
+        status: 'executing',
+        replansCount: previousReplans,
+      };
+    }
+  }
+
+  return null;
 }
 
 /** Extrae las posiciones del camino restante para visualización en canvas (incluye origen) */

@@ -2,7 +2,7 @@
 
 import type { KnownCellRecord } from '@/lib/agent/memory';
 import type { Plan, PlanInput } from './strips';
-import { buildPlan } from './strips';
+import { buildPlan, buildExplorationPlan, EMPTY_PLAN } from './strips';
 
 /**
  * Verifica si el próximo paso MOVE sigue siendo válido:
@@ -32,14 +32,15 @@ export function isNextStepValid(
 export function maybeReplan(plan: Plan, input: PlanInput): Plan {
   if (isNextStepValid(plan, input.knownCells, input.kbFacts)) return plan;
 
-  const newPlan = buildPlan({
-    ...input,
-    previousReplans: plan.replansCount + 1,
-  });
+  const replansCount = plan.replansCount + 1;
+  const newPlan = buildPlan({ ...input, previousReplans: replansCount })
+    ?? buildExplorationPlan({ ...input, previousReplans: replansCount });
 
+  // Si no se encontró alternativa, mantener executing con pasos vacíos
+  // para seguir percibiendo cambios dinámicos en vez de detenerse
   return newPlan ?? {
-    ...plan,
-    status: 'failed',
-    replansCount: plan.replansCount + 1,
+    ...EMPTY_PLAN,
+    status: 'executing',
+    replansCount,
   };
 }

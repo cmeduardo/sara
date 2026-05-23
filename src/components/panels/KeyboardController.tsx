@@ -19,15 +19,18 @@ const KEY_TO_DIR: Record<string, Direction> = {
 /** Ejecuta el ciclo cognitivo completo y aplica el movimiento indicado */
 function step(dir: Direction) {
   const { grid, agentState, setAgentLastDir, updateAgentState } = useWorldStore.getState();
-  const { knownCells, kbFacts, updateMemory, addSensorReading, setKB, setLoopPhase } = useAgentStore.getState();
+  const { knownCells, kbFacts, beliefs, plan, updateMemory, addSensorReading, setKB, setBeliefs, setLoopPhase } = useAgentStore.getState();
 
   if (!agentState.alive) return;
+  if (plan.status === 'executing') return;
 
-  // ── Ciclo cognitivo (fases 3-4) ───────────────────────────────────────────
+  // ── Ciclo cognitivo (fases 3-4-7) ────────────────────────────────────────
   setLoopPhase('perceiving');
-  const result = runAgentCycle(grid, agentState, knownCells, kbFacts, DEFAULTS);
+  const result = runAgentCycle(grid, agentState, knownCells, kbFacts, DEFAULTS, beliefs);
   updateMemory(result.perceived, agentState.steps);
   addSensorReading(result.sensorReading);
+  setLoopPhase('updating_beliefs');
+  setBeliefs(result.updatedBeliefs);
   setKB(result.kbFacts, result.kbNewFacts);
   setLoopPhase('acting');
 

@@ -7,8 +7,8 @@ export const DEFAULTS = {
   gridSize: 12 as GridSize,
 
   /* --- Agente --- */
-  agentVisionRadius: 3,       // radio de Chebyshev para observabilidad parcial
-  initialEnergy: 100,
+  agentVisionRadius: 1,       // radio de Chebyshev para observabilidad parcial
+  initialEnergy: 75,
   initialHP: 100,
 
   /* --- Costos de acción --- */

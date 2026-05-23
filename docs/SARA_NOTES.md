@@ -195,6 +195,19 @@
 
 ---
 
+### 2026-05-22 — Fase 7: Actualización bayesiana del sensor de brisa
+
+**Decisión:** Usar actualización bayesiana incremental (un paso por posición visitada) sobre los vecinos ortogonales del agente, con overrides del KB al final.
+
+- **Fórmula:** P(D|B) = P(B|D)·P(D) / [P(B|D)·P(D) + P(B|¬D)·P(¬D)] donde P(B|D) = 1 - FN = 0.9, P(B|¬D) = FP = 0.05.
+- **Prior:** P(danger) = 0.15 para celdas no observadas.
+- **Overrides KB:** `Safe(x,y)` → belief = 0, `ConfirmedDanger(x,y)` → belief = 1 (más fuertes que la actualización bayesiana).
+- **Resultado observado:** Con reglas de forward chaining activas, los peligros se confirman rápidamente y las creencias convergen a 0%/100%. Los valores intermedios (0.05–0.95) son visibles antes de que R3 confirme o R1 descarte la celda.
+
+- **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 13 (Razonamiento probabilístico), cap. 4.4 (Wumpus con incertidumbre).
+
+---
+
 ### 2026-05-22 — Fase 5: Celdas desconocidas = transitables con penalización
 
 **Decisión:** Las celdas no en `knownCells` se tratan como transitables con `costo = 1 + UNKNOWN_PENALTY (2)` en A*. BFS las trata como costo 1 (sin penalización adicional).
