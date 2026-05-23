@@ -1,0 +1,78 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Paleta Blueprint — colores exactos del diseño de SARA */
+@theme inline {
+  /* Fondos */
+  --color-blueprint-bg: #0E1A26;
+  --color-blueprint-bg-elevated: #142433;
+
+  /* Líneas y bordes */
+  --color-blueprint-grid-line: #2A3A4A;
+  --color-blueprint-border: #1E2E3E;
+
+  /* Textos */
+  --color-blueprint-text: #D4DDE3;
+  --color-blueprint-text-muted: #8A9BA8;
+  --color-blueprint-text-dim: #5A6B78;
+
+  /* Acentos */
+  --color-blueprint-accent-data: #E8C547;
+  --color-blueprint-accent-info: #6FA8B5;
+  --color-blueprint-accent-danger: #C46B5C;
+  --color-blueprint-accent-success: #7FA572;
+
+  /* Entidades del mapa */
+  --color-blueprint-agent: #E8C547;
+  --color-blueprint-victim: #C46B5C;
+  --color-blueprint-station: #6FA8B5;
+
+  /* Shadcn — mapeado a paleta blueprint */
+  --color-background: #0E1A26;
+  --color-foreground: #D4DDE3;
+  --color-card: #142433;
+  --color-card-foreground: #D4DDE3;
+  --color-popover: #142433;
+  --color-popover-foreground: #D4DDE3;
+  --color-primary: #E8C547;
+  --color-primary-foreground: #0E1A26;
+  --color-secondary: #142433;
+  --color-secondary-foreground: #D4DDE3;
+  --color-muted: #142433;
+  --color-muted-foreground: #8A9BA8;
+  --color-accent: #142433;
+  --color-accent-foreground: #D4DDE3;
+  --color-destructive: #C46B5C;
+  --color-border: #1E2E3E;
+  --color-input: #1E2E3E;
+  --color-ring: #2A3A4A;
+
+  /* Radio mínimo — máximo rounded-sm (2px) */
+  --radius: 0.125rem;
+
+  /* Fuentes */
+  --font-sans: var(--font-ibm-plex-sans);
+  --font-mono: var(--font-jetbrains-mono);
+}
+
+:root {
+  --background: #0E1A26;
+  --foreground: #D4DDE3;
+}
+
+@layer base {
+  * {
+    @apply border-blueprint-border outline-none;
+    box-shadow: none !important;
+  }
+  body {
+    @apply bg-blueprint-bg text-blueprint-text font-mono;
+    -webkit-font-smoothing: antialiased;
+  }
+  html {
+    @apply h-full;
+  }
+}
