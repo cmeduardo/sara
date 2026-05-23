@@ -215,3 +215,37 @@
 - **Justificación:** El principio de observabilidad parcial exige que la búsqueda opere sobre lo que el agente SABE, no sobre la realidad. Una celda desconocida podría ser un obstáculo (inaccesible) o libre. Asumir que es libre con penalización implementa el balance entre "no puedo ir por ahí" (pesimismo) y "podría ser libre" (optimismo). La penalización de 2 en A* hace que el agente prefiera rutas por celdas conocidas-seguras cuando existen.
 
 - **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 4.4 (Búsqueda en espacios parcialmente observables).
+
+---
+
+### 2026-05-23 — Fase 8: Función de utilidad y toma de decisiones
+
+**Decisión:** Función de utilidad multicriterio que evalúa tres tipos de acción: RESCUE, EXPLORE, RECHARGE. El agente elige la acción de mayor utilidad en cada ciclo de decisión.
+
+- **Alternativas consideradas:**
+  - Máquina de estados finita (FSM): simple, predecible, pero no escala con múltiples criterios simultáneos.
+  - Árbol de comportamiento (BT): más expresivo que FSM, pero requiere diseño manual de prioridades. La función de utilidad las calcula automáticamente.
+  - Función de utilidad aditiva: elegida por su transparencia y fácil depuración (cada componente visible en el panel).
+
+- **Fórmula general:** `U(acción) = recompensa_base − costo_viaje − costo_peligro`
+  - `costo_viaje = dist_manhattan × moveCost`
+  - `costo_peligro = Σ P(danger_i) × daño_promedio` sobre celdas del camino en L
+  - `recompensa_base(rescue) = rewardWeights.victim`
+  - `recompensa_base(explore) = explore × fracci_desconocida × 20` → decrece conforme se mapea el mundo
+  - `recompensa_base(recharge) = rechargeLow × (1 + 10 × urgencia_cúbica)`
+
+- **Urgencia de recarga cúbica:** `urgency = (1 − E/E_max)³`
+  - `urgency(100%) = 0.0` → estación irrelevante a energía llena
+  - `urgency(25%)  = 0.42` → prioridad alta
+  - `urgency(15%)  = 0.61` → urgencia crítica
+  - La función cúbica hace que la recarga sea irrelevante a energía alta y dominante a energía crítica, evitando viajes innecesarios a la estación.
+
+- **Integración en PlanController:** `evaluateActions` se llama en dos momentos: plan exhausto (currentIdx fuera de rango) y plan fallido. El resultado se guarda en `agentStore.actionUtilities` para visualización. El plan resultante usa:
+  - `best.type === 'rescue'` → `buildPlan` (A* hacia víctima + RESCUE)
+  - `best.type === 'recharge'` → `buildMovePlan(best.goal, ...)` (MOVE a estación)
+  - `best.type === 'explore'` → `buildExplorationPlan` (frontera BFS)
+  - Fallback: si el plan preferido falla (sin camino), intentar rescue o explore alternativamente.
+
+- **Visualización en BrainPanel:** Sección "Utilidad" muestra las tres acciones evaluadas ordenadas por utilidad descendente con barra de progreso relativa. La acción elegida (top) se marca con ▶. El campo "Modo" en Plan STRIPS refleja la acción activa: rescatar / recargar / explorar.
+
+- **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 16 (Toma de decisiones bajo incertidumbre), cap. 2.4 (Agentes basados en utilidad).

@@ -8,10 +8,12 @@ import { useAgentStore } from '@/store/agentStore';
 import { DEFAULTS } from '@/config/defaults';
 import { runAgentCycle, applyMoveAction } from '@/lib/agent/loop';
 import { maybeReplan } from '@/lib/planning/replan';
-import { buildPlan, EMPTY_PLAN, planRemainingPath, buildExplorationPlan } from '@/lib/planning/strips';
+import { buildPlan, EMPTY_PLAN, planRemainingPath, buildExplorationPlan, buildMovePlan } from '@/lib/planning/strips';
 import { getCell, setCell } from '@/lib/environment/grid';
 import { tickDynamism } from '@/lib/environment/dynamism';
+import { evaluateActions } from '@/lib/utility/utility';
 import type { Direction } from '@/types/world';
+import type { Plan } from '@/lib/planning/strips';
 
 const STEP_INTERVAL_MS = 450;
 
@@ -30,7 +32,7 @@ function dirBetween(from: { x: number; y: number }, to: { x: number; y: number }
 function executePlanStep() {
   const { grid, agentState, setAgentLastDir, updateAgentState, setPlan: setWorldPlan, setGrid } =
     useWorldStore.getState();
-  const { knownCells, kbFacts, beliefs, plan, updateMemory, addSensorReading, setKB, setBeliefs, setLoopPhase, setPlan } =
+  const { knownCells, kbFacts, beliefs, plan, updateMemory, addSensorReading, setKB, setBeliefs, setLoopPhase, setPlan, setActionUtilities } =
     useAgentStore.getState();
 
   if (!agentState.alive) return;
@@ -71,7 +73,7 @@ function executePlanStep() {
 
   setKB(freshKBFacts, result.kbNewFacts);
 
-  // Plan fallido → intentar explorar antes de rendirse
+  // Plan fallido → evaluar utilidades y recuperar
   if (validPlan.status === 'failed') {
     const planInput = {
       agentPos: agentState.pos,
@@ -81,8 +83,26 @@ function executePlanStep() {
       gridSize: grid.length,
       previousReplans: validPlan.replansCount,
     };
-    const recovery = buildPlan(planInput) ?? buildExplorationPlan(planInput);
-    // Mantener executing vacío para seguir percibiendo si no hay recuperación
+    const evals = evaluateActions({
+      agentPos: agentState.pos,
+      agentEnergy: agentState.energy,
+      kbFacts: freshKBFacts,
+      knownCells: freshKnownCells,
+      beliefs: result.updatedBeliefs,
+      gridSize: grid.length,
+    });
+    setActionUtilities(evals);
+    setLoopPhase('deciding');
+    const best = evals[0];
+    let recovery: Plan | null = null;
+    if (best?.type === 'rescue') {
+      recovery = buildPlan(planInput);
+    } else if (best?.type === 'recharge') {
+      recovery = buildMovePlan(best.goal, planInput);
+    } else {
+      recovery = buildExplorationPlan(planInput);
+    }
+    if (!recovery) recovery = buildPlan(planInput) ?? buildExplorationPlan(planInput);
     setPlan(recovery ?? { ...EMPTY_PLAN, status: 'executing' });
     setWorldPlan(recovery ? planRemainingPath(recovery) : []);
     setLoopPhase('idle');
@@ -91,7 +111,7 @@ function executePlanStep() {
 
   const step = validPlan.steps[validPlan.currentIdx];
   if (!step) {
-    // Plan exhausto → rescatar, explorar o seguir esperando cambios del entorno
+    // Plan exhausto → evaluar utilidades y elegir la mejor acción siguiente
     const planInput = {
       agentPos: agentState.pos,
       kbFacts: freshKBFacts,
@@ -100,9 +120,26 @@ function executePlanStep() {
       gridSize: grid.length,
       previousReplans: validPlan.replansCount,
     };
-    const nextPlan = buildPlan(planInput) ?? buildExplorationPlan(planInput);
-    // Si no hay nada que hacer, mantener 'executing' con pasos vacíos para
-    // seguir percibiendo cambios dinámicos del entorno
+    const evals = evaluateActions({
+      agentPos: agentState.pos,
+      agentEnergy: agentState.energy,
+      kbFacts: freshKBFacts,
+      knownCells: freshKnownCells,
+      beliefs: result.updatedBeliefs,
+      gridSize: grid.length,
+    });
+    setActionUtilities(evals);
+    setLoopPhase('deciding');
+    const best = evals[0];
+    let nextPlan: Plan | null = null;
+    if (best?.type === 'rescue') {
+      nextPlan = buildPlan(planInput);
+    } else if (best?.type === 'recharge') {
+      nextPlan = buildMovePlan(best.goal, planInput);
+    } else {
+      nextPlan = buildExplorationPlan(planInput);
+    }
+    if (!nextPlan) nextPlan = buildPlan(planInput) ?? buildExplorationPlan(planInput);
     setPlan(nextPlan ?? { ...EMPTY_PLAN, status: 'executing' });
     setWorldPlan(nextPlan ? planRemainingPath(nextPlan) : []);
     setLoopPhase('idle');

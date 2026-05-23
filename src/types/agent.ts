@@ -28,6 +28,14 @@ export interface SensorReading {
   actualBreezeNearby: boolean;
 }
 
+/** Resultado de evaluar una acción con la función de utilidad (Fase 8) */
+export interface ActionEvaluation {
+  type: 'rescue' | 'explore' | 'recharge';
+  goal: Position;
+  utility: number;
+  breakdown: { baseReward: number; travelCost: number; dangerCost: number };
+}
+
 /** Fase actual del ciclo cognitivo del agente */
 export type LoopPhase =
   | 'idle'

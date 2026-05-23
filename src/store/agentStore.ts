@@ -1,7 +1,7 @@
 /* Store cognitivo del agente — memoria, creencias, lecturas de sensores, plan */
 
 import { create } from 'zustand';
-import type { PerceivedCell, KnownCell, SensorReading, LoopPhase } from '@/types/agent';
+import type { PerceivedCell, KnownCell, SensorReading, LoopPhase, ActionEvaluation } from '@/types/agent';
 import type { Position } from '@/types/world';
 import type { Plan } from '@/lib/planning/strips';
 import { EMPTY_PLAN } from '@/lib/planning/strips';
@@ -29,6 +29,8 @@ interface AgentStore {
   kbNewFacts: string[];
   /** Plan STRIPS activo (Fase 6) */
   plan: Plan;
+  /** Evaluaciones de utilidad del último ciclo de decisión (Fase 8) */
+  actionUtilities: ActionEvaluation[];
 
   /** Actualiza la memoria con las percepciones del turno */
   updateMemory: (perceived: PerceivedCell[], step: number) => void;
@@ -42,6 +44,7 @@ interface AgentStore {
   /** Reemplaza la KB con los hechos nuevos del turno */
   setKB: (facts: string[], newFacts: string[]) => void;
   setPlan: (plan: Plan) => void;
+  setActionUtilities: (evals: ActionEvaluation[]) => void;
   reset: () => void;
 }
 
@@ -54,6 +57,7 @@ export const useAgentStore = create<AgentStore>((set) => ({
   kbFacts: [],
   kbNewFacts: [],
   plan: EMPTY_PLAN,
+  actionUtilities: [],
 
   updateMemory: (perceived, step) =>
     set((state) => {
@@ -82,6 +86,8 @@ export const useAgentStore = create<AgentStore>((set) => ({
 
   setPlan: (plan) => set({ plan }),
 
+  setActionUtilities: (actionUtilities) => set({ actionUtilities }),
+
   reset: () =>
     set({
       knownCells: {},
@@ -92,5 +98,6 @@ export const useAgentStore = create<AgentStore>((set) => ({
       kbFacts: [],
       kbNewFacts: [],
       plan: EMPTY_PLAN,
+      actionUtilities: [],
     }),
 }));

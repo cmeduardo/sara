@@ -10,6 +10,7 @@ import { recentKnownCells, memorySummary } from '@/lib/agent/memory';
 import { parsePredicateKey, PREDICATE_KINDS, type PredicateKind } from '@/lib/knowledge/predicates';
 import { EMPTY_PLAN, knownVictimPositions } from '@/lib/planning/strips';
 import { useUIStore } from '@/store/uiStore';
+import type { ActionEvaluation } from '@/types/agent';
 
 function CellTypeBadge({ type }: { type: string }) {
   const colorMap: Record<string, string> = {
@@ -37,7 +38,7 @@ const KIND_COLOR: Record<PredicateKind, string> = {
 };
 
 export function BrainPanel() {
-  const { knownCells, beliefs, lastPerceived, sensorReadings, loopPhase, kbFacts, kbNewFacts, plan, setPlan } =
+  const { knownCells, beliefs, lastPerceived, sensorReadings, loopPhase, kbFacts, kbNewFacts, plan, setPlan, actionUtilities } =
     useAgentStore();
   const { agentState, agentStart, initialGrid, setPlan: setWorldPlan, updateAgentState, setGrid } = useWorldStore();
   const { showPlan, togglePlan } = useUIStore();
@@ -46,6 +47,7 @@ export function BrainPanel() {
 
   const isRescueMission = plan.goalPos !== null
     && kbFacts.includes(`VictimAt(${plan.goalPos.x},${plan.goalPos.y})`);
+  const planMode = actionUtilities[0]?.type ?? (isRescueMission ? 'rescue' : 'explore');
 
   const recent = recentKnownCells(knownCells, agentState.steps, 15);
   const summary = memorySummary(knownCells);
@@ -122,8 +124,12 @@ export function BrainPanel() {
           {plan.status === 'executing' && (
             <>
               <span className="text-blueprint-text-muted">Modo</span>
-              <span className={isRescueMission ? 'text-blueprint-victim' : 'text-blueprint-accent-info'}>
-                {isRescueMission ? 'rescatar' : 'explorar'}
+              <span className={
+                planMode === 'rescue'   ? 'text-blueprint-victim' :
+                planMode === 'recharge' ? 'text-blueprint-accent-success' :
+                                          'text-blueprint-accent-info'
+              }>
+                {planMode === 'rescue' ? 'rescatar' : planMode === 'recharge' ? 'recargar' : 'explorar'}
               </span>
             </>
           )}
@@ -204,6 +210,48 @@ export function BrainPanel() {
           Reiniciar (conservar conocimiento)
         </button>
       </section>
+
+      {/* ── Utilidad de acciones (Fase 8) ───────────────────────────────── */}
+      {actionUtilities.length > 0 && (
+        <section className="border border-blueprint-border bg-blueprint-bg-elevated p-2 rounded-sm flex flex-col gap-1.5">
+          <p className="text-blueprint-text-dim uppercase tracking-widest text-[10px]">Utilidad</p>
+          {actionUtilities.map((ev: ActionEvaluation, i) => {
+            const isTop = i === 0;
+            const typeColor: Record<string, string> = {
+              rescue:   'text-blueprint-victim',
+              explore:  'text-blueprint-accent-info',
+              recharge: 'text-blueprint-accent-success',
+            };
+            // rango aprox −150 a +100 para barra relativa
+            const maxU = Math.max(...actionUtilities.map((e) => Math.abs(e.utility)), 1);
+            const pct = Math.round(Math.abs(ev.utility) / maxU * 100);
+            return (
+              <div key={`${ev.type}-${ev.goal.x}-${ev.goal.y}`}
+                className={`flex flex-col gap-0.5 ${isTop ? '' : 'opacity-60'}`}
+              >
+                <div className="flex items-center gap-1.5">
+                  {isTop && <span className="text-[8px] text-blueprint-accent-data">▶</span>}
+                  <span className={`${typeColor[ev.type] ?? 'text-blueprint-text'} text-[10px]`}>
+                    {ev.type}
+                  </span>
+                  <span className="text-blueprint-text-dim text-[10px]">
+                    ({ev.goal.x},{ev.goal.y})
+                  </span>
+                  <span className={`ml-auto text-[10px] ${ev.utility >= 0 ? 'text-blueprint-accent-success' : 'text-blueprint-accent-danger'}`}>
+                    {ev.utility >= 0 ? '+' : ''}{ev.utility.toFixed(1)}
+                  </span>
+                </div>
+                <div className="h-0.5 bg-blueprint-border rounded-sm overflow-hidden">
+                  <div
+                    className={`h-full ${ev.utility >= 0 ? 'bg-blueprint-accent-success' : 'bg-blueprint-accent-danger'}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      )}
 
       {/* Sensores — última lectura */}
       {lastSensor && (

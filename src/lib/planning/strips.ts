@@ -123,6 +123,33 @@ export function buildPlan(input: PlanInput): Plan | null {
   };
 }
 
+// ── Plan de movimiento genérico (sin acción final) ───────────────────────────
+
+/**
+ * Construye un plan de solo MOVE hacia `goal`.
+ * Usado para recargar o para moverse a cualquier destino sin efecto final.
+ * Devuelve null si no hay camino o si el agente ya está en el destino.
+ */
+export function buildMovePlan(goal: Position, input: PlanInput): Plan | null {
+  const { agentPos, knownCells, beliefs, gridSize, previousReplans = 0 } = input;
+  if (goal.x === agentPos.x && goal.y === agentPos.y) return null;
+
+  const result = astar({ start: agentPos, goal, knownCells, beliefs, gridSize });
+  if (!result.found || result.path.length < 2) return null;
+
+  const steps: PlanStep[] = [];
+  for (let i = 0; i < result.path.length - 1; i++) {
+    steps.push({ kind: 'MOVE', from: result.path[i]!, to: result.path[i + 1]! });
+  }
+  return {
+    steps,
+    currentIdx: 0,
+    goalPos: goal,
+    status: 'executing',
+    replansCount: previousReplans,
+  };
+}
+
 // ── Plan de exploración ───────────────────────────────────────────────────────
 
 /**
