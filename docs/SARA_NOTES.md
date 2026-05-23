@@ -78,3 +78,40 @@
 - **Justificación:** El estilo Wumpus World (Russell & Norvig, AIMA cap. 7) usa radio cuadrado. La visión cuadrada es más fácil de razonar en términos de coordenadas de cuadrícula y más eficiente de verificar (max vs raíz cuadrada).
 
 - **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 7 (Agentes lógicos, Wumpus World).
+
+---
+
+### 2026-05-22 — Fase 2: PRNG Mulberry32 para generación reproducible
+
+**Decisión:** Usar el algoritmo Mulberry32 como PRNG para el generador procedural.
+
+- **Alternativas consideradas:**
+  - `Math.random()`: no reproducible, no sirve para seeds.
+  - LCG (Linear Congruential Generator): rápido y simple, pero mala calidad estadística (baja period, correlación).
+  - Mulberry32 (elegido): 32-bit, una sola operación de actualización, excelente distribución, output entre 0 y 1, implementación de ~5 líneas, diseñado para juegos/simulaciones.
+  - Xoshiro/Xoroshiro: mejor calidad pero más líneas de código innecesario para este scope.
+
+- **Justificación:** El generador necesita reproducibilidad (mismo seed → mismo mapa) para que el usuario pueda compartir o registrar seeds interesantes. Mulberry32 es suficiente para grids de hasta 20×20 (≤400 celdas). Referencia de implementación: Tommy Ettinger (2021).
+
+---
+
+### 2026-05-22 — Fase 2: BFS para verificación de conectividad
+
+**Decisión:** Verificar que todas las víctimas sean alcanzables desde el inicio del agente usando BFS; si alguna es inaccesible, reintentar la generación.
+
+- **Alternativas consideradas:**
+  - No verificar: el agente podría quedar atascado con víctimas inalcanzables, haciendo la simulación inútil.
+  - Union-Find (Disjoint Set): más eficiente para consultas repetidas, pero innecesariamente complejo para una verificación por episodio.
+  - BFS (elegido): O(n) donde n = celdas, simple de implementar, suficientemente rápido para grids de hasta 20×20.
+
+- **Justificación:** La rúbrica exige "búsqueda no informada" (BFS). Reutilizar BFS aquí sirve como introducción natural al algoritmo antes de implementarlo formalmente en Fase 5. Los obstáculos bloquean el paso; peligros y estaciones son transitables (el agente puede arriesgarse a cruzarlos).
+
+- **Referencia:** Russell & Norvig, AIMA 4ª ed., cap. 3 (Búsqueda no informada).
+
+---
+
+### 2026-05-22 — Fase 2: Distancia mínima entre peligros en el generador
+
+**Decisión:** Aplicar una distancia mínima Manhattan de `max(2, floor(size/5))` entre celdas de peligro al generarlas.
+
+- **Justificación:** Sin esta restricción, el generador tiende a agrupar todos los peligros en el mismo sector del mapa (ya que se toman de una lista aleatoria continua). La separación garantiza que el agente enfrente peligros distribuidos, haciendo la simulación más interesante y el entrenamiento de Q-learning más diverso. El valor `size/5` escala con el tamaño del mapa (4 en 20×20, 2 en 9×9).

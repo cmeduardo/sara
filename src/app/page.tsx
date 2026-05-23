@@ -1,4 +1,4 @@
-/* Pantalla principal — layout base de Fase 1 */
+/* Pantalla principal de simulación */
 
 import { GridCanvas } from '@/components/grid/GridCanvas';
 import { LayerToggles } from '@/components/panels/LayerToggles';
@@ -14,9 +14,12 @@ export default function HomePage() {
         <span className="text-blueprint-text-dim text-xs font-mono">
           Sistema de Agentes de Rescate Autónomo
         </span>
-        <span className="ml-auto text-blueprint-text-dim text-xs font-mono">
-          Fase 1 — Entorno y Grid
-        </span>
+        <a
+          href="/editor"
+          className="ml-auto text-blueprint-text-dim hover:text-blueprint-accent-info text-xs font-mono transition-colors"
+        >
+          editor →
+        </a>
       </header>
 
       {/* Cuerpo: canvas + panel de capas */}
