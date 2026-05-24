@@ -343,3 +343,26 @@
   - 11-18/18 estados visitados según el comportamiento emergente
 
 - **Referencia:** Sutton & Barto, "Reinforcement Learning: An Introduction" 2ª ed., cap. 6 (TD Learning), sección 6.5 (Q-learning: Off-policy TD Control).
+
+---
+
+### 2026-05-23 — Post-entrega: Bugs turbo training
+
+**Problema 1 — Q-table entrenada no afectaba el comportamiento en vivo**
+
+El bug raíz era que `runTurboEpisode` reiniciaba `knownCells = {}` en cada episodio headless, mientras que la simulación en vivo preserva el conocimiento entre episodios (via `endAndRestartEpisode`). Resultado: turbo solo entrenaba Q-values para estados con `explorationBucket = 0` (mapa casi vacío). En episodios 2+ de la sim en vivo, el agente tenía más celdas conocidas (bucket 1 o 2) → Q-values = 0 para esos estados → la función de utilidad dominaba completamente → comportamiento idéntico al de un agente sin entrenamiento.
+
+- **Fix en `turbo.ts`:** `runTurboEpisode` acepta `inheritedKnownCells` e `inheritedBeliefs` opcionales. Al inicio de cada episodio los sincroniza con `initialGrid` (igual que `endAndRestartEpisode`) y reconstruye `kbFacts` desde las víctimas conocidas. Retorna `finalKnownCells` y `finalBeliefs` para el siguiente episodio.
+- **Fix en `BrainPanel.tsx`:** El coordinador turbo acumula `inheritedKnownCells/inheritedBeliefs` entre episodios, pasándolos a cada `runTurboEpisode`. Esto entrena la Q-table en el rango completo de estados (exploración 0→1→2) que el agente encontrará en vivo.
+
+**Problema 2 — Comportamiento muy diferente al presionar "Iniciar" después del turbo**
+
+La Q-table quedaba entrenada con el conocimiento acumulado (último episodio turbo: mapa casi completo), pero la sim en vivo arrancaba con `knownCells` vacío → estado completamente diferente → resultados incomparables.
+
+- **Fix:** Al finalizar el turbo (o abortarlo), se transfiere el `inheritedKnownCells` y `inheritedBeliefs` finales al store del agente en vivo (`agentRef.setState(...)` + `setKB(...)`). El siguiente "Iniciar" arranca en el mismo estado cognitivo que terminó el último episodio turbo: mapa conocido, víctimas en KB, Q-values directamente aplicables.
+
+**Problema 3 — Turbo no disponible para BFS y stores hardcodeados**
+
+`handleRunTurbo` leía siempre de `useWorldStore` y `useLearningStore` (A*), independientemente del tab activo. Además, la sección UI estaba oculta con `{!isBFS && ...}`.
+
+- **Fix:** El callback ahora selecciona los stores correctos según `isBFS` (fijo por instancia de BrainPanel): `worldRef`, `learnRef`, `agentRef`. Se eliminó la condición `!isBFS` en la UI — el entrenamiento turbo está disponible en ambos tabs.

@@ -7,6 +7,8 @@ import { useWorldStore } from '@/store/worldStore';
 import { useAgentStore } from '@/store/agentStore';
 import { useWorldStoreBFS } from '@/store/worldStoreBFS';
 import { useAgentStoreBFS } from '@/store/agentStoreBFS';
+import { useLearningStore } from '@/store/learningStore';
+import { useLearningStoreBFS } from '@/store/learningStoreBFS';
 import {
   saveMap,
   deleteMap,
@@ -31,6 +33,8 @@ export function MapLibrary() {
   const { reset: resetAgent } = useAgentStore();
   const { loadGrid: loadGridBFS, setPlan: setWorldPlanBFS } = useWorldStoreBFS();
   const { reset: resetAgentBFS } = useAgentStoreBFS();
+  const { resetLearning } = useLearningStore();
+  const { resetLearning: resetLearningBFS } = useLearningStoreBFS();
 
   // Cargar lista al montar
   useEffect(() => {
@@ -62,9 +66,11 @@ export function MapLibrary() {
     loadGrid(map.cells as Grid, map.size, map.agentStart);
     setWorldPlan([]);
     resetAgent();
+    resetLearning();
     loadGridBFS(map.cells as Grid, map.size, map.agentStart);
     setWorldPlanBFS([]);
     resetAgentBFS();
+    resetLearningBFS();
     router.push('/');
   }
 
