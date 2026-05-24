@@ -64,7 +64,7 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
     qTable, epsilon, alpha, episode, episodeHistory, nextEpisode,
     isRunningTurbo, turboProgress, setTurboState, applyTurboResults,
   } = isBFS ? learnB : learnA;
-  const { showPlan, togglePlan } = useUIStore();
+  const { showPlan, togglePlan, stepMode, setStepMode, incrementStep } = useUIStore();
 
   const [kbFilter, setKbFilter] = useState<PredicateKind | null>(null);
   const turboAbortRef = useRef(false);
@@ -222,79 +222,120 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
         <div className="flex gap-1.5 mt-0.5">
           <button
             onClick={() => {
-              // Inicia A*
-              setPlan({ ...EMPTY_PLAN, status: 'executing' });
-              setWorldPlan([]);
-              if (!showPlan) togglePlan();
-              // Inicia BFS
+              setStepMode(false);
+              useAgentStore.getState().setPlan({ ...EMPTY_PLAN, status: 'executing' });
+              useWorldStore.getState().setPlan([]);
               useAgentStoreBFS.getState().setPlan({ ...EMPTY_PLAN, status: 'executing' });
               useWorldStoreBFS.getState().setPlan([]);
+              if (!showPlan) togglePlan();
             }}
-            disabled={plan.status === 'executing'}
+            disabled={!stepMode && agentA.plan.status === 'executing' && agentB.plan.status === 'executing'}
             className="flex-1 text-[10px] font-mono px-2 py-1 border rounded-sm transition-colors
               border-blueprint-accent-info text-blueprint-accent-info
               hover:bg-blueprint-accent-info hover:text-blueprint-bg
               disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Iniciar ambos
+            ▶ Iniciar
           </button>
           <button
             onClick={() => {
-              // Detiene A*
-              setPlan(EMPTY_PLAN);
-              setWorldPlan([]);
-              if (showPlan) togglePlan();
-              // Detiene BFS
+              useAgentStore.getState().setPlan(EMPTY_PLAN);
+              useWorldStore.getState().setPlan([]);
               useAgentStoreBFS.getState().setPlan(EMPTY_PLAN);
               useWorldStoreBFS.getState().setPlan([]);
+              setStepMode(false);
+              if (showPlan) togglePlan();
             }}
-            disabled={plan.status === 'idle'}
+            disabled={agentA.plan.status === 'idle' && agentB.plan.status === 'idle' && !stepMode}
             className="flex-1 text-[10px] font-mono px-2 py-1 border rounded-sm transition-colors
               border-blueprint-border text-blueprint-text-dim
               hover:border-blueprint-text-muted hover:text-blueprint-text
               disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Detener ambos
+            ■ Detener
+          </button>
+          <button
+            onClick={() => {
+              // Activar modo paso a paso y asegurar planes en ejecución
+              setStepMode(true);
+              if (useAgentStore.getState().plan.status !== 'executing') {
+                useAgentStore.getState().setPlan({ ...EMPTY_PLAN, status: 'executing' });
+                useWorldStore.getState().setPlan([]);
+              }
+              if (useAgentStoreBFS.getState().plan.status !== 'executing') {
+                useAgentStoreBFS.getState().setPlan({ ...EMPTY_PLAN, status: 'executing' });
+                useWorldStoreBFS.getState().setPlan([]);
+              }
+              incrementStep();
+            }}
+            className={`flex-1 text-[10px] font-mono px-2 py-1 border rounded-sm transition-colors
+              ${stepMode
+                ? 'border-blueprint-accent-warning text-blueprint-accent-warning bg-blueprint-accent-warning/10'
+                : 'border-blueprint-accent-warning text-blueprint-accent-warning hover:bg-blueprint-accent-warning/10'
+              }`}
+          >
+            → Paso
           </button>
         </div>
 
         {/* Reiniciar: restaura mapa y agente, conserva conocimiento */}
         <button
           onClick={() => {
-            // Reinicia A*
-            nextEpisode(agentState.rescued, agentState.steps, agentState.alive);
-            setPlan(EMPTY_PLAN);
-            setWorldPlan([]);
+            // ── A* ──────────────────────────────────────────────────────────
+            const wA  = useWorldStore.getState();
+            const agA = useAgentStore.getState();
+
+            // Guardar conocimiento acumulado
+            const knownA   = agA.knownCells;
+            const beliefsA = agA.beliefs;
+
+            // Sincronizar knownCells con initialGrid (restaura tipo real de cada celda)
+            const syncedKnownA: typeof knownA = {};
+            for (const [key, known] of Object.entries(knownA)) {
+              const [x, y] = key.split(',').map(Number) as [number, number];
+              const actualCell = wA.initialGrid[y]?.[x];
+              syncedKnownA[key] = { cell: actualCell ?? known.cell, lastSeenStep: known.lastSeenStep };
+            }
+            const newKBFactsA = Object.entries(syncedKnownA)
+              .filter(([, k]) => k.cell.type === 'victim')
+              .map(([key]) => `VictimAt(${key})`);
+
+            useLearningStore.getState().nextEpisode(wA.agentState.rescued, wA.agentState.steps, wA.agentState.alive);
+            agA.reset();
+            useAgentStore.setState({ knownCells: syncedKnownA, beliefs: beliefsA });
+            useAgentStore.getState().setKB(newKBFactsA, newKBFactsA);
+            useAgentStore.getState().setPlan({ ...EMPTY_PLAN, status: 'executing' });
+            wA.setPlan([]);
+            wA.setGrid(wA.initialGrid);
+            wA.updateAgentState({ pos: wA.agentStart, energy: DEFAULTS.initialEnergy, hp: DEFAULTS.initialHP, steps: 0, rescued: 0, alive: true });
+
+            // ── BFS ─────────────────────────────────────────────────────────
+            const wB  = useWorldStoreBFS.getState();
+            const agB = useAgentStoreBFS.getState();
+
+            const knownB   = agB.knownCells;
+            const beliefsB = agB.beliefs;
+
+            const syncedKnownB: typeof knownB = {};
+            for (const [key, known] of Object.entries(knownB)) {
+              const [x, y] = key.split(',').map(Number) as [number, number];
+              const actualCell = wB.initialGrid[y]?.[x];
+              syncedKnownB[key] = { cell: actualCell ?? known.cell, lastSeenStep: known.lastSeenStep };
+            }
+            const newKBFactsB = Object.entries(syncedKnownB)
+              .filter(([, k]) => k.cell.type === 'victim')
+              .map(([key]) => `VictimAt(${key})`);
+
+            useLearningStoreBFS.getState().nextEpisode(wB.agentState.rescued, wB.agentState.steps, wB.agentState.alive);
+            agB.reset();
+            useAgentStoreBFS.setState({ knownCells: syncedKnownB, beliefs: beliefsB });
+            useAgentStoreBFS.getState().setKB(newKBFactsB, newKBFactsB);
+            useAgentStoreBFS.getState().setPlan({ ...EMPTY_PLAN, status: 'executing' });
+            wB.setPlan([]);
+            wB.setGrid(wB.initialGrid);
+            wB.updateAgentState({ pos: wB.agentStart, energy: DEFAULTS.initialEnergy, hp: DEFAULTS.initialHP, steps: 0, rescued: 0, alive: true });
+
             if (showPlan) togglePlan();
-            setGrid(initialGrid);
-            updateAgentState({
-              pos: agentStart,
-              energy: DEFAULTS.initialEnergy,
-              hp: DEFAULTS.initialHP,
-              steps: 0,
-              rescued: 0,
-              alive: true,
-            });
-            // Reinicia BFS
-            const bfsWorld = useWorldStoreBFS.getState();
-            const bfsAgent = useAgentStoreBFS.getState();
-            useLearningStoreBFS.getState().nextEpisode(
-              bfsWorld.agentState.rescued,
-              bfsWorld.agentState.steps,
-              bfsWorld.agentState.alive,
-            );
-            bfsAgent.reset();
-            bfsAgent.setPlan(EMPTY_PLAN);
-            bfsWorld.setPlan([]);
-            bfsWorld.setGrid(bfsWorld.initialGrid);
-            bfsWorld.updateAgentState({
-              pos: bfsWorld.agentStart,
-              energy: DEFAULTS.initialEnergy,
-              hp: DEFAULTS.initialHP,
-              steps: 0,
-              rescued: 0,
-              alive: true,
-            });
           }}
           className="w-full text-[10px] font-mono px-2 py-1 border rounded-sm transition-colors
             border-blueprint-accent-warning text-blueprint-accent-warning
@@ -319,9 +360,9 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
               explore:  'text-blueprint-accent-info',
               recharge: 'text-blueprint-accent-success',
             };
-            const algoLabel: Record<string, string> = {
-              rescue:   'A*', explore: 'BFS', recharge: 'A*',
-            };
+            const algoLabel: Record<string, string> = isBFS
+              ? { rescue: 'BFS', explore: 'BFS', recharge: 'BFS' }
+              : { rescue: 'A*',  explore: 'A*',  recharge: 'A*'  };
             if (!ev) {
               return (
                 <div key={actionType} className="flex items-center gap-1.5 opacity-30">

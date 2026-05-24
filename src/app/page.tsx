@@ -41,11 +41,11 @@ function AgentStatsBar({ state }: { state: AgentState }) {
 }
 
 export default function HomePage() {
-  const { grid, gridSize, agentState, agentLastDir, plan } = useWorldStore();
+  const { grid, agentState, agentLastDir, plan } = useWorldStore();
   const { beliefs } = useAgentStore();
   const { showVisibility, showBeliefs, showPlan } = useUIStore();
 
-  const { grid: gridBFS, gridSize: gridSizeBFS, agentState: agentStateBFS, agentLastDir: agentLastDirBFS, plan: planBFS } = useWorldStoreBFS();
+  const { grid: gridBFS, agentState: agentStateBFS, agentLastDir: agentLastDirBFS, plan: planBFS } = useWorldStoreBFS();
   const { beliefs: beliefsBFS } = useAgentStoreBFS();
 
   const [brainTab, setBrainTab] = useState<'astar' | 'bfs'>('astar');
@@ -89,7 +89,7 @@ export default function HomePage() {
           <div className="flex-1 p-2 min-h-0">
             <GridCanvas
               grid={grid}
-              gridSize={gridSize}
+              gridSize={grid.length as import('@/types/world').GridSize}
               agentState={agentState}
               agentLastDir={agentLastDir}
               plan={plan}
@@ -113,7 +113,7 @@ export default function HomePage() {
           <div className="flex-1 p-2 min-h-0">
             <GridCanvas
               grid={gridBFS}
-              gridSize={gridSizeBFS}
+              gridSize={gridBFS.length as import('@/types/world').GridSize}
               agentState={agentStateBFS}
               agentLastDir={agentLastDirBFS}
               plan={planBFS}

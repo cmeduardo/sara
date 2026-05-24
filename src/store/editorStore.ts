@@ -61,7 +61,21 @@ export const useEditorStore = create<EditorStore>((set) => ({
   setTool: (tool) => set({ tool }),
   setDangerProb: (dangerProb) => set({ dangerProb }),
   setDangerDamage: (dangerDamage) => set({ dangerDamage }),
-  setGridSize: (size) => set({ gridSize: size }),
+  setGridSize: (size) => set((state) => {
+    // Resize grid: copy cells that fit in the new size, fill rest with empty
+    const newGrid = createEmpty(size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const cell = state.grid[y]?.[x];
+        if (cell) (newGrid[y] as typeof newGrid[number])[x] = cell;
+      }
+    }
+    const agentStart = {
+      x: Math.min(state.agentStart.x, size - 1),
+      y: Math.min(state.agentStart.y, size - 1),
+    };
+    return { gridSize: size, grid: newGrid, agentStart };
+  }),
 
   applyTool: (pos, erase) =>
     set((state) => {

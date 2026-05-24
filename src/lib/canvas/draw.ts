@@ -12,7 +12,8 @@ export function pixelToCell(
   clientX: number,
   clientY: number,
   canvas: HTMLCanvasElement,
-  cellSize: number
+  cellSize: number,
+  gridSize?: number,
 ): Position | null {
   const rect = canvas.getBoundingClientRect();
   // Factor de escala: el canvas puede estar escalado por CSS
@@ -23,6 +24,7 @@ export function pixelToCell(
   const gx = Math.floor((cx - CANVAS_MARGIN) / cellSize);
   const gy = Math.floor((cy - CANVAS_MARGIN) / cellSize);
   if (gx < 0 || gy < 0) return null;
+  if (gridSize !== undefined && (gx >= gridSize || gy >= gridSize)) return null;
   return { x: gx, y: gy };
 }
 

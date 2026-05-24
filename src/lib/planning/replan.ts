@@ -7,12 +7,16 @@ import { buildPlan, buildExplorationPlan, EMPTY_PLAN } from './strips';
 /**
  * Verifica si el próximo paso MOVE sigue siendo válido:
  * - La celda destino no es un obstáculo conocido
- * - La celda destino no es un ConfirmedDanger en la KB
+ *
+ * ConfirmedDanger ya NO invalida el plan: BFS es no informado (acepta pasar
+ * por peligro si es el camino más corto) y A* ya penaliza el peligro vía
+ * stepCost. Bloquear ConfirmedDanger causaba un bucle infinito donde el plan
+ * nuevo siempre volvía a pasar por la misma celda peligrosa conocida.
  */
 export function isNextStepValid(
   plan: Plan,
   knownCells: KnownCellRecord,
-  kbFacts: string[],
+  _kbFacts: string[],
 ): boolean {
   if (plan.status !== 'executing') return false;
   const step = plan.steps[plan.currentIdx];
@@ -21,7 +25,6 @@ export function isNextStepValid(
   const { x, y } = step.to;
   const known = knownCells[`${x},${y}`];
   if (known?.cell.type === 'obstacle') return false;
-  if (kbFacts.includes(`ConfirmedDanger(${x},${y})`)) return false;
   return true;
 }
 

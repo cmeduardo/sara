@@ -86,8 +86,8 @@ export function SearchCanvas({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const cellSize = calcCellSize(canvas.width, gridSize);
-    const pos = pixelToCell(e.clientX, e.clientY, canvas, cellSize);
-    if (!pos || pos.x < 0 || pos.y < 0 || pos.x >= gridSize || pos.y >= gridSize) return;
+    const pos = pixelToCell(e.clientX, e.clientY, canvas, cellSize, gridSize);
+    if (!pos) return;
     onCellClick(pos);
   }
 

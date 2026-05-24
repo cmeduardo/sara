@@ -5,10 +5,11 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useWorldStore } from '@/store/worldStore';
-import { useAgentStore } from '@/store/agentStore';
+import { useAgentStore } from '@/store/agentStore'; // beliefs only
 import { SearchCanvas } from '@/components/comparativa/SearchCanvas';
 import { compareSearches, type CompareResult } from '@/lib/search/compare';
 import type { Position } from '@/types/world';
+import type { KnownCellRecord } from '@/lib/agent/memory';
 
 // ── Fila de la tabla de comparativa ──────────────────────────────────────────
 
@@ -43,19 +44,28 @@ function MetricRow({ label, bfsVal, astarVal, lowerIsBetter = true }: RowProps) 
 
 export default function ComparativaPage() {
   const { grid, gridSize, agentState, agentLastDir } = useWorldStore();
-  const { knownCells, beliefs } = useAgentStore();
+  const { beliefs } = useAgentStore();
 
   const [goalPos, setGoalPos] = useState<Position | null>(null);
   const [results, setResults] = useState<CompareResult | null>(null);
 
+  // Build a complete WorldModel from the actual grid so both algorithms
+  // correctly avoid obstacles and A* can penalize known danger cells.
+  const fullKnownCells: KnownCellRecord = {};
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      const cell = grid[y]?.[x];
+      if (cell) fullKnownCells[`${x},${y}`] = { cell, lastSeenStep: 0 };
+    }
+  }
+
   function handleRun() {
     if (!goalPos) return;
     setResults(
-      compareSearches({ start: agentState.pos, goal: goalPos, knownCells, beliefs, gridSize })
+      compareSearches({ start: agentState.pos, goal: goalPos, knownCells: fullKnownCells, beliefs, gridSize })
     );
   }
 
-  const knownCount = Object.keys(knownCells).length;
   const totalCells = gridSize * gridSize;
 
   return (
@@ -84,7 +94,7 @@ export default function ComparativaPage() {
             gridSize={gridSize}
             agentState={agentState}
             agentLastDir={agentLastDir}
-            knownCells={knownCells}
+            knownCells={fullKnownCells}
             goalPos={goalPos}
             bfsPath={results?.bfs.path ?? []}
             astarPath={results?.astar.path ?? []}
@@ -120,8 +130,8 @@ export default function ComparativaPage() {
             <div className="flex items-center justify-between text-[10px] font-mono">
               <span className="text-blueprint-text-muted">WorldModel</span>
               <span className="text-blueprint-text-dim">
-                <span className="text-blueprint-accent-data">{knownCount}</span>
-                /{totalCells} celdas conocidas
+                <span className="text-blueprint-accent-data">{totalCells}</span>
+                /{totalCells} celdas (mapa completo)
               </span>
             </div>
 
@@ -155,16 +165,13 @@ export default function ComparativaPage() {
             {!results ? (
               <div className="flex flex-col gap-2">
                 <p className="text-blueprint-text-dim text-[10px] font-mono leading-relaxed">
-                  1. Mueve el agente en la simulación para ampliar el WorldModel.
+                  1. Haz clic en una celda del mapa para marcar el objetivo.
                 </p>
                 <p className="text-blueprint-text-dim text-[10px] font-mono leading-relaxed">
-                  2. Haz clic en una celda del mapa para marcar el objetivo.
+                  2. Pulsa "Ejecutar búsquedas" para comparar.
                 </p>
                 <p className="text-blueprint-text-dim text-[10px] font-mono leading-relaxed">
-                  3. Ejecuta las búsquedas y compará los resultados.
-                </p>
-                <p className="text-blueprint-text-dim text-[10px] font-mono leading-relaxed">
-                  La niebla indica celdas desconocidas — las búsquedas las tratan como transitables con penalización de incertidumbre.
+                  El mapa completo es visible — BFS elige el camino más corto (ignora riesgo); A* evita celdas peligrosas minimizando costo esperado.
                 </p>
               </div>
             ) : (
@@ -227,9 +234,9 @@ export default function ComparativaPage() {
                 {/* Nota de contexto */}
                 <div className="border border-blueprint-border bg-blueprint-bg-elevated p-2 rounded-sm">
                   <p className="text-blueprint-text-dim text-[10px] font-mono leading-relaxed">
-                    BFS garantiza el camino de menos pasos. A* minimiza el costo esperado
-                    (1 por paso + daño × prob en celdas peligrosas + penalización en celdas
-                    desconocidas) usando h(n) = Manhattan + riesgo estimado.
+                    BFS garantiza el camino de menos pasos ignorando el peligro. A* minimiza
+                    el costo esperado (1 por paso + daño × prob en celdas peligrosas) y
+                    rodea las zonas de riesgo usando h(n) = Manhattan + riesgo estimado.
                   </p>
                 </div>
               </div>

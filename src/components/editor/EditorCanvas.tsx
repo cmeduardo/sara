@@ -80,7 +80,7 @@ export function EditorCanvas() {
       isErasingRef.current = e.button === 2;
       const canvas = canvasRef.current;
       if (!canvas) return;
-      const pos = pixelToCell(e.clientX, e.clientY, canvas, getCellSize());
+      const pos = pixelToCell(e.clientX, e.clientY, canvas, getCellSize(), gridSize);
       if (pos) applyTool(pos, isErasingRef.current);
     },
     [applyTool, getCellSize]
@@ -90,7 +90,7 @@ export function EditorCanvas() {
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
-      const pos = pixelToCell(e.clientX, e.clientY, canvas, getCellSize());
+      const pos = pixelToCell(e.clientX, e.clientY, canvas, getCellSize(), gridSize);
 
       hoverRef.current = pos;
 

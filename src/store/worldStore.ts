@@ -79,11 +79,11 @@ export function createWorldStore() {
     plan: [],
 
     setGrid: (grid) => set({ grid }),
-    loadGrid: (grid, size, agentStart) =>
+    loadGrid: (grid, _size, agentStart) =>
       set({
         grid,
         initialGrid: grid,
-        gridSize: size,
+        gridSize: grid.length as GridSize,
         agentState: { ...BASE_AGENT_STATE, pos: agentStart },
         agentLastDir: 'N',
         agentStart,

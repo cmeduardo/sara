@@ -166,7 +166,7 @@ export function buildMovePlan(goal: Position, input: PlanInput): Plan | null {
  * Devuelve null si toda la cuadrícula está explorada o no hay frontera alcanzable.
  */
 export function buildExplorationPlan(input: PlanInput): Plan | null {
-  const { agentPos, knownCells, gridSize, previousReplans = 0 } = input;
+  const { agentPos, knownCells, beliefs, gridSize, previousReplans = 0, algorithm = 'astar' } = input;
 
   const frontierSet = new Set<string>();
 
@@ -191,7 +191,6 @@ export function buildExplorationPlan(input: PlanInput): Plan | null {
 
   if (frontierSet.size === 0) return null;
 
-  // Candidatos más cercanos por Manhattan para limitar llamadas BFS
   const candidates = [...frontierSet]
     .map((k) => {
       const [x, y] = k.split(',').map(Number) as [number, number];
@@ -200,9 +199,10 @@ export function buildExplorationPlan(input: PlanInput): Plan | null {
     .sort((a, b) => a.dist - b.dist)
     .slice(0, 10);
 
-  // BFS: mínimo de pasos, sin sesgo por riesgo — ideal para exploración
   for (const { pos: target } of candidates) {
-    const result = bfs({ start: agentPos, goal: target, knownCells, beliefs: {}, gridSize });
+    const result = algorithm === 'astar'
+      ? astar({ start: agentPos, goal: target, knownCells, beliefs, gridSize })
+      : bfs({ start: agentPos, goal: target, knownCells, beliefs: {}, gridSize });
     if (result.found && result.path.length >= 2) {
       const steps: PlanStep[] = [];
       for (let i = 0; i < result.path.length - 1; i++) {

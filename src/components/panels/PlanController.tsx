@@ -10,6 +10,7 @@ import { useWorldStoreBFS } from '@/store/worldStoreBFS';
 import { useAgentStoreBFS } from '@/store/agentStoreBFS';
 import { useLearningStoreBFS } from '@/store/learningStoreBFS';
 import { DEFAULTS } from '@/config/defaults';
+import { useUIStore } from '@/store/uiStore';
 import { runAgentCycle, applyMoveAction } from '@/lib/agent/loop';
 import { maybeReplan } from '@/lib/planning/replan';
 import { buildPlan, EMPTY_PLAN, planRemainingPath, buildExplorationPlan, buildMovePlan } from '@/lib/planning/strips';
@@ -17,8 +18,9 @@ import { getCell, setCell } from '@/lib/environment/grid';
 import { tickDynamism } from '@/lib/environment/dynamism';
 import { evaluateActions } from '@/lib/utility/utility';
 import { extractState, selectAction } from '@/lib/learning/qlearning';
-import type { Direction } from '@/types/world';
+import type { Direction, AgentState } from '@/types/world';
 import type { Plan, PlanInput } from '@/lib/planning/strips';
+import type { KnownCellRecord } from '@/lib/agent/memory';
 
 const STEP_INTERVAL_MS = 450;
 
@@ -50,6 +52,67 @@ function makePlanController(
   learningHook: typeof useLearningStore,
   algorithm: 'bfs' | 'astar',
 ) {
+  /**
+   * Cierra el episodio actual con Q-update y reinicia automáticamente el mundo.
+   * Preserva el conocimiento acumulado del agente (conservar conocimiento).
+   */
+  function endAndRestartEpisode(
+    agentState: AgentState,
+    survived: boolean,
+    freshKBFacts: string[],
+    freshKnownCells: KnownCellRecord,
+    gridSize: number,
+  ) {
+    const { lastState, lastAction, updateQStep, nextEpisode: recordEpisode } = learningHook.getState();
+    const { agentStart, initialGrid } = worldHook.getState();
+    const { setPlan, setKB, setLoopPhase, reset: resetAgent } = agentHook.getState();
+    const { setGrid, updateAgentState, setPlan: setWorldPlan } = worldHook.getState();
+
+    // Q-update final del episodio
+    if (lastState && lastAction) {
+      const finalState = extractState({ kbFacts: freshKBFacts, energy: agentState.energy, knownCells: freshKnownCells, gridSize });
+      const deathBonus = survived ? 0 : DEFAULTS.rewardWeights.death;
+      updateQStep(deathBonus, finalState);
+    }
+
+    recordEpisode(agentState.rescued, agentState.steps, survived);
+
+    // Reset del mundo — el agente vuelve al inicio con energía y HP completos
+    setGrid(initialGrid);
+    updateAgentState({
+      pos: agentStart,
+      energy: DEFAULTS.initialEnergy,
+      hp: DEFAULTS.initialHP,
+      steps: 0,
+      rescued: 0,
+      alive: true,
+    });
+    setWorldPlan([]);
+
+    // Conservar beliefs; sincronizar knownCells con el grid reiniciado
+    const currentBeliefs = agentHook.getState().beliefs;
+    const currentKnown   = agentHook.getState().knownCells;
+
+    // Actualiza cada celda conocida con su tipo real en initialGrid (corrige datos obsoletos)
+    const syncedKnown: KnownCellRecord = {};
+    for (const [key, known] of Object.entries(currentKnown)) {
+      const [x, y] = key.split(',').map(Number) as [number, number];
+      const actualCell = initialGrid[y]?.[x];
+      syncedKnown[key] = { cell: actualCell ?? known.cell, lastSeenStep: known.lastSeenStep };
+    }
+
+    // Reconstruir hechos VictimAt desde víctimas visibles en memoria
+    const newKBFacts = Object.entries(syncedKnown)
+      .filter(([, k]) => k.cell.type === 'victim')
+      .map(([key]) => `VictimAt(${key})`);
+
+    resetAgent();
+    agentHook.setState({ knownCells: syncedKnown, beliefs: currentBeliefs });
+    setKB(newKBFacts, newKBFacts);
+    setPlan({ ...EMPTY_PLAN, status: 'executing' });
+    setLoopPhase('idle');
+  }
+
   function decideNextPlan(planInput: PlanInput, agentEnergy: number): Plan | null {
     const { agentPos, kbFacts, knownCells, beliefs, gridSize } = planInput;
     const { qTable, epsilon, lastState, lastAction, lastKnownCount, lastRescued, lastSteps, setLastTransition, updateQStep } =
@@ -71,6 +134,10 @@ function makePlanController(
     }
 
     const evals = evaluateActions({ agentPos, agentEnergy, kbFacts, knownCells, beliefs, gridSize });
+
+    // Sin acciones disponibles — episodio sin más posibilidades
+    if (evals.length === 0) return null;
+
     const { setActionUtilities, setLoopPhase } = agentHook.getState();
     setActionUtilities(evals);
     setLoopPhase('deciding');
@@ -104,19 +171,11 @@ function makePlanController(
     if (!agentState.alive) return;
     if (plan.status !== 'executing') return;
 
-    // Límite de pasos por episodio — evita bucles infinitos en mapas totalmente explorados
+    // Límite de pasos — reinicio automático del episodio
     if (agentState.steps >= DEFAULTS.maxStepsPerEpisode) {
-      const { lastState, lastAction, updateQStep, nextEpisode } = learningHook.getState();
-      if (lastState && lastAction) {
-        const knownCount = Object.keys(knownCells).length;
-        const timeoutState = extractState({ kbFacts, energy: agentState.energy, knownCells, gridSize: grid.length });
-        updateQStep(-5, timeoutState);
-        void knownCount;
-      }
-      nextEpisode(agentState.rescued, agentState.steps, true);
-      setPlan(EMPTY_PLAN);
-      setWorldPlan([]);
-      setLoopPhase('idle');
+      const freshKnown = knownCells;
+      const freshFacts = kbFacts;
+      endAndRestartEpisode(agentState, true, freshFacts, freshKnown, grid.length);
       return;
     }
 
@@ -165,8 +224,12 @@ function makePlanController(
 
     if (validPlan.status === 'failed') {
       const recovery = decideNextPlan(basePlanInput, agentState.energy);
-      setPlan(recovery ?? { ...EMPTY_PLAN, status: 'executing' });
-      setWorldPlan(recovery ? planRemainingPath(recovery) : []);
+      if (!recovery) {
+        endAndRestartEpisode(agentState, true, freshKBFacts, freshKnownCells, grid.length);
+        return;
+      }
+      setPlan(recovery);
+      setWorldPlan(planRemainingPath(recovery));
       setLoopPhase('idle');
       return;
     }
@@ -174,8 +237,13 @@ function makePlanController(
     const step = validPlan.steps[validPlan.currentIdx];
     if (!step) {
       const nextPlan = decideNextPlan(basePlanInput, agentState.energy);
-      setPlan(nextPlan ?? { ...EMPTY_PLAN, status: 'executing' });
-      setWorldPlan(nextPlan ? planRemainingPath(nextPlan) : []);
+      if (!nextPlan) {
+        // Sin acciones posibles — reiniciar episodio automáticamente
+        endAndRestartEpisode(agentState, true, freshKBFacts, freshKnownCells, grid.length);
+        return;
+      }
+      setPlan(nextPlan);
+      setWorldPlan(planRemainingPath(nextPlan));
       setLoopPhase('idle');
       return;
     }
@@ -191,24 +259,18 @@ function makePlanController(
           updateAgentState(newState);
 
           if (!newState.alive) {
-            const { lastState, lastAction, lastKnownCount, lastRescued, lastSteps, updateQStep, nextEpisode } =
-              learningHook.getState();
-            const finalSteps    = agentState.steps + 1;
-            const finalRescued  = agentState.rescued;
-            if (lastState && lastAction) {
-              const deadState = extractState({ kbFacts: freshKBFacts, energy: 0, knownCells: freshKnownCells, gridSize: grid.length });
-              const reward = computeReward(
-                finalRescued - lastRescued,
-                Object.keys(freshKnownCells).length - lastKnownCount,
-                finalSteps - lastSteps,
-              ) + DEFAULTS.rewardWeights.death;
-              updateQStep(reward, deadState);
-            }
-            nextEpisode(finalRescued, finalSteps, false);
-            setLoopPhase('idle');
+            // Agente muerto — reiniciar episodio
+            endAndRestartEpisode(
+              { ...agentState, steps: agentState.steps + 1, rescued: agentState.rescued },
+              false,
+              freshKBFacts,
+              freshKnownCells,
+              grid.length,
+            );
             return;
           }
         } else {
+          // Camino bloqueado (obstáculo descubierto) — replanificar
           const replan = buildPlan({ ...basePlanInput, previousReplans: validPlan.replansCount + 1 })
             ?? buildExplorationPlan({ ...basePlanInput, previousReplans: validPlan.replansCount + 1 });
           setPlan(replan ?? { ...EMPTY_PLAN, status: 'executing' });
@@ -245,8 +307,18 @@ function makePlanController(
         { ...basePlanInput, kbFacts: factsAfterRescue },
         agentState.energy,
       );
-      setPlan(nextPlan ?? { ...EMPTY_PLAN, status: 'executing' });
-      setWorldPlan(nextPlan ? planRemainingPath(nextPlan) : []);
+      if (!nextPlan) {
+        endAndRestartEpisode(
+          { ...agentState, rescued: agentState.rescued + 1 },
+          true,
+          factsAfterRescue,
+          freshKnownCells,
+          grid.length,
+        );
+        return;
+      }
+      setPlan(nextPlan);
+      setWorldPlan(planRemainingPath(nextPlan));
     }
 
     setLoopPhase('idle');
@@ -256,8 +328,10 @@ function makePlanController(
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const { plan } = agentHook();
     const { agentState } = worldHook();
+    const { stepMode, stepRequest } = useUIStore();
 
-    const shouldRun = agentState.alive && plan.status === 'executing';
+    // Intervalo de auto-ejecución — desactivado en modo paso a paso
+    const shouldRun = agentState.alive && plan.status === 'executing' && !stepMode;
 
     useEffect(() => {
       if (shouldRun) {
@@ -277,6 +351,15 @@ function makePlanController(
         }
       };
     }, [shouldRun]);
+
+    // Trigger de paso manual — dispara exactamente un tick por incremento
+    const prevStepRef = useRef(stepRequest);
+    useEffect(() => {
+      if (stepRequest !== prevStepRef.current) {
+        prevStepRef.current = stepRequest;
+        executePlanStep();
+      }
+    }, [stepRequest]);
 
     return null;
   };
