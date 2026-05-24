@@ -10,12 +10,15 @@ interface UIStore {
   stepMode: boolean;
   /** Incrementar para disparar un único tick en ambos PlanController */
   stepRequest: number;
+  /** Milisegundos entre pasos de simulación */
+  simSpeed: number;
 
   toggleVisibility: () => void;
   toggleBeliefs: () => void;
   togglePlan: () => void;
   setStepMode: (v: boolean) => void;
   incrementStep: () => void;
+  setSimSpeed: (v: number) => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -24,10 +27,12 @@ export const useUIStore = create<UIStore>((set) => ({
   showPlan: false,
   stepMode: false,
   stepRequest: 0,
+  simSpeed: 450,
 
   toggleVisibility: () => set((s) => ({ showVisibility: !s.showVisibility })),
   toggleBeliefs: () => set((s) => ({ showBeliefs: !s.showBeliefs })),
   togglePlan: () => set((s) => ({ showPlan: !s.showPlan })),
   setStepMode: (v) => set({ stepMode: v }),
   incrementStep: () => set((s) => ({ stepRequest: s.stepRequest + 1 })),
+  setSimSpeed: (v) => set({ simSpeed: v }),
 }));

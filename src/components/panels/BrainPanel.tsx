@@ -64,7 +64,7 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
     qTable, epsilon, alpha, episode, episodeHistory, nextEpisode,
     isRunningTurbo, turboProgress, setTurboState, applyTurboResults,
   } = isBFS ? learnB : learnA;
-  const { showPlan, togglePlan, stepMode, setStepMode, incrementStep } = useUIStore();
+  const { showPlan, togglePlan, stepMode, setStepMode, incrementStep, simSpeed, setSimSpeed } = useUIStore();
 
   const [kbFilter, setKbFilter] = useState<PredicateKind | null>(null);
   const turboAbortRef = useRef(false);
@@ -276,6 +276,34 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
           >
             → Paso
           </button>
+        </div>
+
+        {/* Velocidad de simulación */}
+        <div className="flex flex-col gap-1 pt-0.5">
+          <div className="flex items-center justify-between">
+            <span className="text-blueprint-text-dim uppercase tracking-widest text-[10px]">Velocidad</span>
+            <span className="text-blueprint-accent-data font-mono text-[10px]">
+              {simSpeed < 100
+                ? `${Math.round(1000 / simSpeed)} pasos/s`
+                : simSpeed <= 500
+                ? `${(1000 / simSpeed).toFixed(1)} pasos/s`
+                : `${simSpeed} ms/paso`}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-blueprint-text-muted text-[9px]">lento</span>
+            <input
+              type="range"
+              min={50}
+              max={1500}
+              step={25}
+              value={1550 - simSpeed}
+              onChange={(e) => setSimSpeed(1550 - Number(e.target.value))}
+              className="flex-1 h-1 appearance-none rounded-full cursor-pointer
+                bg-blueprint-border accent-blueprint-accent-info"
+            />
+            <span className="text-blueprint-text-muted text-[9px]">rápido</span>
+          </div>
         </div>
 
         {/* Reiniciar: restaura mapa y agente, conserva conocimiento */}

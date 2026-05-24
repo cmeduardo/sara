@@ -22,7 +22,6 @@ import type { Direction, AgentState } from '@/types/world';
 import type { Plan, PlanInput } from '@/lib/planning/strips';
 import type { KnownCellRecord } from '@/lib/agent/memory';
 
-const STEP_INTERVAL_MS = 450;
 
 function dirBetween(from: { x: number; y: number }, to: { x: number; y: number }): Direction | null {
   const dx = to.x - from.x;
@@ -328,21 +327,18 @@ function makePlanController(
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const { plan } = agentHook();
     const { agentState } = worldHook();
-    const { stepMode, stepRequest } = useUIStore();
+    const { stepMode, stepRequest, simSpeed } = useUIStore();
 
     // Intervalo de auto-ejecución — desactivado en modo paso a paso
     const shouldRun = agentState.alive && plan.status === 'executing' && !stepMode;
 
     useEffect(() => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
       if (shouldRun) {
-        if (!intervalRef.current) {
-          intervalRef.current = setInterval(executePlanStep, STEP_INTERVAL_MS);
-        }
-      } else {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
+        intervalRef.current = setInterval(executePlanStep, simSpeed);
       }
       return () => {
         if (intervalRef.current) {
@@ -350,7 +346,7 @@ function makePlanController(
           intervalRef.current = null;
         }
       };
-    }, [shouldRun]);
+    }, [shouldRun, simSpeed]);
 
     // Trigger de paso manual — dispara exactamente un tick por incremento
     const prevStepRef = useRef(stepRequest);
