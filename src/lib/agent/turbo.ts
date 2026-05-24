@@ -19,6 +19,9 @@ export interface TurboEpisodeInput {
   qTable: QTable;
   epsilon: number;
   alpha: number;
+  /** Conocimiento heredado del episodio anterior (igual que endAndRestartEpisode en live) */
+  inheritedKnownCells?: KnownCellRecord;
+  inheritedBeliefs?: Record<string, number>;
 }
 
 export interface TurboEpisodeResult {
@@ -26,6 +29,9 @@ export interface TurboEpisodeResult {
   steps: number;
   survived: boolean;
   qTable: QTable;
+  /** Conocimiento final para pasar al próximo episodio */
+  finalKnownCells: KnownCellRecord;
+  finalBeliefs: Record<string, number>;
 }
 
 function dirBetween(from: Position, to: Position): Direction | null {
@@ -48,8 +54,9 @@ function computeReward(deltaRescued: number, deltaExplored: number, deltaSteps: 
 
 /**
  * Ejecuta un episodio completo de forma síncrona sin actualizar stores de React.
- * Cada episodio empieza con conocimiento vacío; solo la Q-table se hereda.
- * Devuelve la Q-table actualizada y las métricas del episodio.
+ * El conocimiento (knownCells, beliefs) se hereda del episodio anterior igual que
+ * endAndRestartEpisode lo hace en la simulación en vivo — así la Q-table se entrena
+ * en los mismos estados que el agente encontrará en episodios reales posteriores al 1.
  */
 export function runTurboEpisode(input: TurboEpisodeInput): TurboEpisodeResult {
   let grid = input.initialGrid;
@@ -65,9 +72,19 @@ export function runTurboEpisode(input: TurboEpisodeInput): TurboEpisodeResult {
     alive:   true,
   };
 
+  // Sincronizar el conocimiento heredado con el grid inicial (como endAndRestartEpisode)
   let knownCells: KnownCellRecord = {};
-  let kbFacts: string[] = [];
-  let beliefs: Record<string, number> = {};
+  if (input.inheritedKnownCells) {
+    for (const [key, known] of Object.entries(input.inheritedKnownCells)) {
+      const [x, y] = key.split(',').map(Number) as [number, number];
+      const actualCell = input.initialGrid[y]?.[x];
+      knownCells[key] = { cell: actualCell ?? known.cell, lastSeenStep: known.lastSeenStep };
+    }
+  }
+  let kbFacts: string[] = Object.entries(knownCells)
+    .filter(([, k]) => k.cell.type === 'victim')
+    .map(([key]) => `VictimAt(${key})`);
+  let beliefs: Record<string, number> = { ...(input.inheritedBeliefs ?? {}) };
   let plan: Plan = { ...EMPTY_PLAN, status: 'executing' };
 
   let lastQState:     string | null = null;
@@ -236,5 +253,7 @@ export function runTurboEpisode(input: TurboEpisodeInput): TurboEpisodeResult {
     steps:    agentState.steps,
     survived: agentState.alive,
     qTable,
+    finalKnownCells: knownCells,
+    finalBeliefs:    beliefs,
   };
 }

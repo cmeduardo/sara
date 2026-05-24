@@ -71,12 +71,22 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
 
   // ── Coordinador turbo: corre N episodios en lotes de 10 con yields ────────
   const handleRunTurbo = useCallback(async (totalEps: number) => {
-    const { initialGrid, agentStart } = useWorldStore.getState();
+    // Stores correctos según el modo (A* o BFS) — isBFS es fijo por instancia de BrainPanel
+    const worldRef   = isBFS ? useWorldStoreBFS   : useWorldStore;
+    const learnRef   = isBFS ? useLearningStoreBFS : useLearningStore;
+    const agentRef   = isBFS ? useAgentStoreBFS    : useAgentStore;
+
+    const { initialGrid, agentStart } = worldRef.getState();
     turboAbortRef.current = false;
 
-    let { qTable: qt, epsilon: eps, alpha: alp } = useLearningStore.getState();
+    let { qTable: qt, epsilon: eps, alpha: alp } = learnRef.getState();
     const batchSize = 10;
     const results: Array<{ rescued: number; steps: number; survived: boolean }> = [];
+
+    // Acumula conocimiento entre episodios igual que endAndRestartEpisode en la sim real,
+    // para que la Q-table se entrene en los mismos estados que el agente encontrará en vivo
+    let inheritedKnownCells: import('@/lib/agent/memory').KnownCellRecord = {};
+    let inheritedBeliefs: Record<string, number> = {};
 
     setTurboState(true, { current: 0, total: totalEps });
 
@@ -85,20 +95,33 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
       const batchEnd = Math.min(i + batchSize, totalEps);
 
       for (let j = i; j < batchEnd; j++) {
-        const res = runTurboEpisode({ initialGrid, agentStart, qTable: qt, epsilon: eps, alpha: alp });
+        const res = runTurboEpisode({
+          initialGrid, agentStart, qTable: qt, epsilon: eps, alpha: alp,
+          inheritedKnownCells,
+          inheritedBeliefs,
+        });
         qt  = res.qTable;
         eps = Math.max(eps * DEFAULTS.qLearning.epsilonDecay, DEFAULTS.qLearning.minEpsilon);
         alp = Math.max(alp * DEFAULTS.qLearning.alphaDecay,   DEFAULTS.qLearning.minAlpha);
         results.push({ rescued: res.rescued, steps: res.steps, survived: res.survived });
+        inheritedKnownCells = res.finalKnownCells;
+        inheritedBeliefs    = res.finalBeliefs;
       }
 
       setTurboState(true, { current: Math.min(batchEnd, totalEps), total: totalEps });
-      // Yield al browser para que actualice la UI
       await new Promise<void>((r) => setTimeout(r, 0));
     }
 
     applyTurboResults(results, qt, eps, alp);
-  }, [setTurboState, applyTurboResults]);
+
+    // Transferir el conocimiento final del turbo al agente en vivo:
+    // el siguiente "Iniciar" arranca en el mismo estado que el último episodio turbo
+    const finalKBFacts = Object.entries(inheritedKnownCells)
+      .filter(([, k]) => k.cell.type === 'victim')
+      .map(([key]) => `VictimAt(${key})`);
+    agentRef.setState({ knownCells: inheritedKnownCells, beliefs: inheritedBeliefs });
+    agentRef.getState().setKB(finalKBFacts, finalKBFacts);
+  }, [setTurboState, applyTurboResults, isBFS]);
 
   const isRescueMission = plan.goalPos !== null
     && kbFacts.includes(`VictimAt(${plan.goalPos.x},${plan.goalPos.y})`);
@@ -488,8 +511,8 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
           </div>
         )}
 
-        {/* ── Turbo training (Fase 10) — solo agente A* ────────────── */}
-        {!isBFS && <div className="flex flex-col gap-1.5 mt-1 border-t border-blueprint-border pt-1.5">
+        {/* ── Turbo training (Fase 10) ──────────────────────────────── */}
+        <div className="flex flex-col gap-1.5 mt-1 border-t border-blueprint-border pt-1.5">
           <p className="text-blueprint-text-dim text-[9px] uppercase tracking-widest">Entrenamiento Turbo</p>
 
           {isRunningTurbo ? (
@@ -529,7 +552,7 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
               ))}
             </div>
           )}
-        </div>}
+        </div>
       </section>
 
       {/* ── Gráficas de convergencia (Fase 10) ───────────────────────────── */}
