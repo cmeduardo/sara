@@ -56,7 +56,7 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
   const learnB = useLearningStoreBFS();
 
   const isBFS = mode === 'bfs';
-  const { knownCells, beliefs, lastPerceived, sensorReadings, loopPhase, kbFacts, kbNewFacts, plan, setPlan, actionUtilities } =
+  const { knownCells, beliefs, lastPerceived, sensorReadings, kbFacts, kbNewFacts, plan, setPlan, actionUtilities } =
     isBFS ? agentB : agentA;
   const { agentState, agentStart, initialGrid, gridSize, setPlan: setWorldPlan, updateAgentState, setGrid } =
     isBFS ? worldB : worldA;
@@ -152,12 +152,7 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
   return (
     <div className="flex flex-col gap-2 text-xs font-mono overflow-y-auto min-h-0">
 
-      {/* Fase del ciclo */}
-      <section className="border border-blueprint-border bg-blueprint-bg-elevated p-2 rounded-sm">
-        <p className="text-blueprint-text-dim uppercase tracking-widest text-[10px] mb-1">Fase</p>
-        <p className="text-blueprint-accent-data">{loopPhase}</p>
-      </section>
-
+     
       {/* Estado del agente */}
       <section className={`border p-2 rounded-sm ${!agentState.alive ? 'border-blueprint-accent-danger bg-blueprint-accent-danger/10' : 'border-blueprint-border bg-blueprint-bg-elevated'}`}>
         <div className="flex items-center justify-between mb-1.5">
