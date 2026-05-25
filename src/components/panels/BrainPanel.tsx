@@ -29,12 +29,27 @@ function CellTypeBadge({ type }: { type: string }) {
     danger:   'text-blueprint-accent-danger',
     station:  'text-blueprint-station',
   };
+  const labelEs: Record<string, string> = {
+    empty:    'vacío',
+    obstacle: 'obstáculo',
+    victim:   'víctima',
+    danger:   'peligro',
+    station:  'estación',
+  };
   return (
     <span className={`font-mono text-xs ${colorMap[type] ?? 'text-blueprint-text'}`}>
-      {type}
+      {labelEs[type] ?? type}
     </span>
   );
 }
+
+const STATUS_ES: Record<string, string> = {
+  idle: 'inactivo', executing: 'ejecutando', complete: 'completado', failed: 'fallido',
+};
+
+const ACTION_ES: Record<string, string> = {
+  rescue: 'rescatar', explore: 'explorar', recharge: 'recargar',
+};
 
 /** Color de acento por tipo de predicado */
 const KIND_COLOR: Record<PredicateKind, string> = {
@@ -197,7 +212,7 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
             plan.status === 'failed'    ? 'text-blueprint-accent-danger' :
                                           'text-blueprint-text-dim'
           }>
-            {plan.status}
+            {STATUS_ES[plan.status] ?? plan.status}
           </span>
           {plan.status === 'executing' && (
             <>
@@ -412,7 +427,7 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
             if (!ev) {
               return (
                 <div key={actionType} className="flex items-center gap-1.5 opacity-30">
-                  <span className={`${typeColor[actionType]} text-[10px] w-14 shrink-0`}>{actionType}</span>
+                  <span className={`${typeColor[actionType]} text-[10px] w-14 shrink-0`}>{ACTION_ES[actionType] ?? actionType}</span>
                   <span className="text-blueprint-text-dim text-[9px] ml-1">{algoLabel[actionType]}</span>
                   <span className="ml-auto text-blueprint-text-dim text-[10px]">N/A</span>
                 </div>
@@ -424,7 +439,7 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
               <div key={actionType} className={`flex flex-col gap-0.5 ${isTop ? '' : 'opacity-60'}`}>
                 <div className="flex items-center gap-1.5">
                   {isTop && <span className="text-[8px] text-blueprint-accent-data">▶</span>}
-                  <span className={`${typeColor[actionType]} text-[10px]`}>{actionType}</span>
+                  <span className={`${typeColor[actionType]} text-[10px]`}>{ACTION_ES[actionType] ?? actionType}</span>
                   <span className="text-blueprint-text-dim text-[9px] ml-0.5">{algoLabel[actionType]}</span>
                   <span className="text-blueprint-text-dim text-[10px] ml-1">
                     ({ev.goal.x},{ev.goal.y})
@@ -474,7 +489,7 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
             const pct = Math.round(Math.abs(qv) / maxAbs * 100);
             return (
               <div key={a} className="flex items-center gap-1.5">
-                <span className={`${typeColor[a]} text-[10px] w-14 shrink-0`}>{a}</span>
+                <span className={`${typeColor[a]} text-[10px] w-14 shrink-0`}>{ACTION_ES[a] ?? a}</span>
                 <div className="flex-1 h-0.5 bg-blueprint-border rounded-sm overflow-hidden">
                   <div className={`h-full ${qv >= 0 ? 'bg-blueprint-accent-success' : 'bg-blueprint-accent-danger'}`}
                     style={{ width: `${pct}%` }} />
@@ -612,7 +627,7 @@ export function BrainPanel({ mode = 'astar' }: { mode?: 'astar' | 'bfs' }) {
               {lastSensor.breezeDetected ? 'detectada' : 'no'}
             </span>
             <span className="text-blueprint-text-dim text-[9px]">— real —</span>
-            <span className="text-blueprint-text-dim text-[9px]">(debug)</span>
+            <span className="text-blueprint-text-dim text-[9px]">(depuración)</span>
             <span className="text-blueprint-text-muted">Víctima cerca</span>
             <span className={lastSensor.actualVictimNearby ? 'text-blueprint-accent-success opacity-50' : 'text-blueprint-text-dim'}>
               {lastSensor.actualVictimNearby ? 'sí' : 'no'}

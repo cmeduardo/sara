@@ -1,0 +1,618 @@
+================================================================================
+UNIVERSIDAD MARIANO GÁLVEZ DE GUATEMALA
+Centro Universitario Antigua Guatemala
+Facultad de Ingeniería en Sistemas de Información
+
+Curso: Inteligencia Artificial
+Proyecto Final – Sección A
+
+SARA: SISTEMA AUTÓNOMO DE RESCATE EN AMBIENTES DINÁMICOS
+
+Estudiante: Eduardo José Corado
+Fecha de entrega: 24 de mayo de 2026
+================================================================================
+
+
+================================================================================
+1. DESCRIPCIÓN DEL PROBLEMA
+================================================================================
+
+El problema consiste en diseñar e implementar un agente inteligente autónomo
+capaz de operar en un entorno urbano simulado representado como una cuadrícula
+dinámica. El agente debe localizar y rescatar personas en distintas posiciones,
+navegar evitando obstáculos y zonas peligrosas, administrar sus recursos de
+energía de forma eficiente y tomar decisiones racionales bajo condiciones de
+información parcial e incierta.
+
+El entorno es dinámico: las zonas de peligro pueden aparecer, modificar su
+probabilidad de activación o desplazarse durante la ejecución. Las víctimas
+también pueden ser relocalizadas. Esto exige que el agente replanifique de
+forma continua y aprenda de la experiencia para mejorar su desempeño a lo
+largo de múltiples episodios.
+
+El problema se enmarca como un agente inteligente que debe:
+  a) Percibir su entorno con sensores imperfectos (observabilidad parcial).
+  b) Mantener una representación interna del mundo y razonar sobre él.
+  c) Planificar secuencias de acciones para alcanzar múltiples objetivos.
+  d) Manejar incertidumbre mediante modelos probabilísticos.
+  e) Seleccionar acciones que maximicen una función de utilidad.
+  f) Aprender de la experiencia para mejorar su política de decisiones.
+
+
+================================================================================
+2. MODELADO DEL ENTORNO
+================================================================================
+
+2.1 Representación de la cuadrícula
+--------------------------------------
+El entorno se modela como una cuadrícula N×N (tamaño configurable: 9, 12 o 16
+celdas por lado; valor por defecto: 12×12). Cada celda puede ser de los
+siguientes tipos:
+
+  - empty      : celda libre y transitable.
+  - obstacle   : celda bloqueada permanentemente (no transitable).
+  - danger     : zona de peligro con probabilidad de activación (dangerProb) y
+                 daño variable si se activa (dangerDamage entre 5 y 25 HP).
+  - victim     : posición de una persona a rescatar.
+  - station    : estación de recarga de energía.
+  - agent      : posición actual del agente.
+
+2.2 Estado del agente
+-----------------------
+El agente posee:
+  - Posición (x, y) en la cuadrícula.
+  - Energía inicial: 75 unidades. Cada movimiento cuesta 1 unidad; cada
+    rescate cuesta 2 unidades.
+  - Puntos de vida (HP) inicial: 100. Las zonas de peligro pueden reducirlos.
+  - Radio de visión: 1 celda (distancia de Chebyshev), lo que implica
+    observabilidad parcial del entorno.
+
+2.3 Dinamismo del entorno
+---------------------------
+Cada 10 pasos del agente se evalúan los siguientes eventos probabilísticos:
+  - Probabilidad 0.15 de que aparezca una nueva celda de peligro en una celda
+    vacía adyacente a otras zonas de peligro.
+  - Probabilidad 0.20 de que la probabilidad de activación de un peligro
+    existente se modifique.
+  - Probabilidad 0.05 de que una víctima sea trasladada a una celda vacía
+    adyacente (desplazamiento por el entorno dinámico).
+
+2.4 Condiciones de fin de episodio
+-------------------------------------
+Un episodio termina cuando se cumple alguna de las siguientes condiciones:
+  1. El agente alcanza 500 pasos (timeout).
+  2. El agente pierde toda su energía o todos sus HP (alive = false).
+  3. El planificador no encuentra acciones posibles (mapa despejado o sin
+     salidas). En este caso se considera un episodio exitoso si todas las
+     víctimas fueron rescatadas.
+
+Al final de cada episodio se registran las métricas de desempeño y el agente
+reinicia su posición y recursos, conservando el conocimiento acumulado para
+el siguiente episodio.
+
+2.5 Generación procedural de mapas
+-------------------------------------
+Los mapas pueden generarse de forma aleatoria con los siguientes parámetros
+por defecto:
+  - Densidad de obstáculos: 12 % de las celdas.
+  - Densidad de peligros:    6 % de las celdas.
+  - Número de víctimas:      4.
+  - Estaciones de recarga:   1.
+
+El editor visual permite además diseñar y guardar mapas personalizados con una
+biblioteca de escenarios predefinidos.
+
+
+================================================================================
+3. TIPO DE AGENTE
+================================================================================
+
+SARA implementa un agente basado en modelo (model-based agent) con componentes
+de deliberación y aprendizaje:
+
+  - Mantiene un modelo interno del mundo (WorldModel) con el estado conocido de
+    cada celda, la posición de víctimas confirmadas y un mapa de creencias
+    probabilísticas sobre celdas no observadas.
+  - Combina reactividad (detecta cambios en el entorno y replanifica) con
+    deliberación (genera planes de múltiples pasos hacia objetivos).
+  - Incorpora aprendizaje mediante Q-Learning para mejorar la política de
+    selección de objetivos a lo largo de episodios.
+
+Percepciones del agente en cada paso:
+  - Celdas dentro del radio de visión (Chebyshev d≤1).
+  - Señal de "brisa" cuando hay una celda de peligro adyacente (con ruido).
+  - Señal de "víctima detectada" en celdas adyacentes (con ruido).
+
+Acciones disponibles:
+  - MOVE(dirección): desplazarse a una celda adyacente ortogonal.
+  - RESCUE: rescatar a la víctima en la celda actual.
+  - WAIT: permanecer sin acción (sin costo de energía).
+
+
+================================================================================
+4. ALGORITMOS DE BÚSQUEDA
+================================================================================
+
+Se implementaron dos algoritmos de búsqueda de caminos sobre la cuadrícula,
+permitiendo comparación simultánea entre un agente informado (A*) y uno no
+informado (BFS).
+
+4.1 Búsqueda No Informada — BFS (Breadth-First Search)
+--------------------------------------------------------
+BFS expande los nodos en orden de profundidad creciente. Garantiza encontrar
+el camino con menor número de pasos (óptimo en grafos no ponderados) pero no
+considera el costo real de atravesar celdas de peligro.
+
+  - Expande vecinos ortogonales (4 direcciones).
+  - Excluye únicamente obstáculos conocidos.
+  - Las celdas desconocidas se asumen transitables.
+  - Complejidad temporal y espacial: O(N²) en el peor caso.
+
+4.2 Búsqueda Informada — A* (A-Star)
+--------------------------------------
+A* extiende BFS con una función heurística h(n) que guía la búsqueda hacia
+el objetivo de forma eficiente:
+
+  h(n) = Manhattan(n, objetivo) + λ × riesgo_esperado_en_L_path(n, objetivo)
+
+  Donde:
+    - Manhattan(n, objetivo) = |Δx| + |Δy|, estimación del costo mínimo.
+    - riesgo_esperado = Σ P(peligro_i) × daño_promedio  (daño promedio = 12.5)
+      sumado a lo largo del trayecto en L desde n hasta el objetivo.
+    - λ = 0.5: peso del componente de riesgo (hace la heurística inadmisible
+      pero consciente del peligro, lo que mejora la calidad de los caminos).
+
+  Costo de paso g(n):
+    - Celda desconocida: 1 + penalización_desconocida (2 unidades).
+    - Celda de peligro conocida: 1 + P(peligro) × daño_esperado.
+    - Celda libre conocida: 1.
+
+  A* produce caminos que equilibran longitud y seguridad, priorizando rutas
+  que eviten zonas de alto riesgo conocido.
+
+4.3 Comparación de algoritmos
+--------------------------------
+La pantalla de comparativa muestra en tiempo real ambos caminos sobre el mismo
+mapa, reportando:
+
+  Métrica           BFS              A*
+  ─────────────────────────────────────────────────────
+  Pasos del camino  Mínimos          Puede ser mayor
+  Costo de energía  Sin considerar   Minimizado
+  Daño esperado     Sin considerar   Minimizado
+  Nodos expandidos  Mayor            Menor (por guía)
+  ─────────────────────────────────────────────────────
+
+BFS garantiza el camino más corto en número de pasos, mientras que A* puede
+elegir un camino ligeramente más largo pero considerablemente menos peligroso.
+
+
+================================================================================
+5. REPRESENTACIÓN DEL CONOCIMIENTO
+================================================================================
+
+5.1 Base de Conocimiento (KB)
+--------------------------------
+El agente mantiene una Base de Conocimiento proposicional implementada como un
+conjunto de hechos (Set<string>) con operaciones clásicas:
+
+  - kbTell(pred)   : inserta un hecho (idempotente).
+  - kbAsk(pred)    : consulta si un hecho es verdadero.
+  - kbRetract(pred): elimina un hecho.
+
+5.2 Predicados
+----------------
+Los hechos se expresan mediante los siguientes predicados:
+
+  - VictimAt(x, y)         : existe una víctima en la celda (x, y).
+  - Safe(x, y)             : la celda (x, y) es segura (sin peligro confirmado).
+  - ConfirmedDanger(x, y)  : la celda (x, y) tiene peligro confirmado.
+  - StationAt(x, y)        : existe una estación de recarga en (x, y).
+  - Explored(x, y)         : el agente ha visitado la celda (x, y).
+  - Obstacle(x, y)         : la celda (x, y) es un obstáculo.
+
+5.3 Reglas de inferencia
+--------------------------
+El agente infiere hechos nuevos a partir de sus observaciones mediante las
+siguientes reglas:
+
+  R1 (Observación directa): Si el agente visita (x, y) y no detecta peligro
+     → kbTell(Safe(x, y)); kbRetract(VictimAt(x, y)) si ya fue rescatada.
+
+  R2 (Inferencia por brisa): Si detecta brisa en (x, y) → aplica actualización
+     bayesiana a todos los vecinos no observados (actualiza el mapa de creencias).
+
+  R3 (Confirmación de peligro): Si el agente sufre daño al entrar en (x, y)
+     → kbTell(ConfirmedDanger(x, y)).
+
+  R4 (Inferencia negativa): Si el agente no detecta brisa en (x, y) →
+     actualización bayesiana que reduce la creencia de peligro en vecinos.
+
+  R5 (Rescate completado): Tras un rescate exitoso en (x, y)
+     → kbRetract(VictimAt(x, y)).
+
+
+================================================================================
+6. PLANIFICACIÓN
+================================================================================
+
+6.1 Representación STRIPS
+----------------------------
+La planificación se basa en el formalismo STRIPS. Las acciones se definen con:
+  - Precondiciones: condiciones que deben cumplirse para ejecutar la acción.
+  - Efectos: cambios en el estado del mundo al ejecutar la acción.
+
+Acción MOVE(desde, hacia):
+  Precondición: Agente en (desde), celda (hacia) no es obstáculo.
+  Efecto:       Agente en (hacia), Explored(hacia) verdadero.
+  Costo:        1 unidad de energía.
+
+Acción RESCUE(pos):
+  Precondición: Agente en (pos), VictimAt(pos) en KB.
+  Efecto:       VictimAt(pos) retractado de KB, víctima rescatada.
+  Costo:        2 unidades de energía.
+
+Acción RECHARGE(pos):
+  Precondición: Agente en (pos), StationAt(pos) en KB.
+  Efecto:       Energía del agente restaurada al máximo.
+
+6.2 Proceso de planificación
+------------------------------
+El planificador opera en tres modos según el contexto:
+
+  a) buildPlan(input):
+     Selecciona la víctima más cercana conocida en la KB (distancia Manhattan)
+     y genera un plan STRIPS: secuencia de MOVE hasta la víctima + RESCUE.
+     Usa A* o BFS según el algoritmo configurado.
+
+  b) buildMovePlan(input):
+     Genera un plan solo de movimiento hacia un objetivo dado (p.ej., estación
+     de recarga). Usado cuando la función de utilidad decide recargar.
+
+  c) buildExplorationPlan(input):
+     Selecciona la celda más cercana no explorada y genera un plan hacia ella.
+     Permite al agente descubrir nuevas víctimas en zonas desconocidas.
+
+6.3 Replanificación dinámica
+------------------------------
+En cada paso, el controlador verifica si el siguiente paso del plan sigue siendo
+válido (la celda destino no se convirtió en obstáculo). Si el plan es invalidado,
+el agente replanifica automáticamente desde su posición actual. El contador de
+replans se registra por episodio.
+
+6.4 Selección de objetivo (función de utilidad)
+-------------------------------------------------
+Antes de construir el plan, la función de utilidad evalúa las posibles acciones
+de alto nivel y elige el mejor objetivo:
+
+  U(rescatar víctima v) = recompensa_víctima − costo_camino − riesgo_esperado
+  U(recargar en estación s) = urgencia_energía³ × factor_proximidad
+  U(explorar celda c) = recompensa_exploración × (1 − fracción_explorada)
+
+La urgencia de recarga usa una función cúbica (1 − ratio)³ que se vuelve
+dominante cuando la energía cae por debajo del 25 %.
+
+
+================================================================================
+7. MANEJO DE INCERTIDUMBRE
+================================================================================
+
+7.1 Sensores imperfectos
+--------------------------
+Los sensores del agente modelan ruido realista:
+
+  Sensor de víctimas:
+    - Falso positivo: P(detectar víctima | no hay víctima) = 0.10
+    - Falso negativo: P(no detectar | hay víctima) = 0.15
+
+  Sensor de brisa (indicador de peligro adyacente):
+    - Falso positivo: P(brisa | sin peligro adyacente) = 0.05
+    - Falso negativo: P(no brisa | hay peligro adyacente) = 0.10
+
+Las lecturas con ruido se integran al WorldModel del agente, que distingue
+entre lo observado directamente y lo inferido probabilísticamente.
+
+7.2 Actualización Bayesiana de Creencias
+------------------------------------------
+Para cada celda no observada, el agente mantiene una creencia P(peligro | evidencia)
+que se actualiza con la regla de Bayes cada vez que percibe o no percibe brisa:
+
+  Si brisa detectada en (x, y):
+    P(D|B) = P(B|D) · P(D) / [P(B|D)·P(D) + P(B|¬D)·P(¬D)]
+
+  Si brisa no detectada en (x, y):
+    P(D|¬B) = P(¬B|D) · P(D) / [P(¬B|D)·P(D) + P(¬B|¬D)·P(¬D)]
+
+  Donde:
+    P(B|D)  = 1 − FN = 0.90  (sensibilidad del sensor)
+    P(B|¬D) = FP = 0.05       (tasa de falsos positivos)
+    P(D)    = prior = 0.15    (densidad de peligros en el mapa)
+
+El mapa de creencias actualizado se utiliza tanto por A* (en el costo de paso
+y la heurística de riesgo) como por la función de utilidad (para evaluar el
+riesgo de los planes candidatos).
+
+7.3 Manejo de zonas de peligro dinámicas
+------------------------------------------
+Las zonas de peligro poseen una probabilidad de activación (dangerProb) que el
+agente no conoce con certeza. Al entrar en una celda de peligro, el agente
+puede o no sufrir daño según esa probabilidad. El daño, si ocurre, se muestrea
+uniformemente entre 5 y 25 HP.
+
+
+================================================================================
+8. TOMA DE DECISIONES
+================================================================================
+
+8.1 Arquitectura de decisión
+------------------------------
+La toma de decisiones combina planificación deliberativa con aprendizaje:
+
+  1. La función de utilidad evalúa todas las acciones disponibles y las ordena
+     por utilidad esperada (considerando distancia, riesgo y urgencia).
+  2. El Q-Learning ajusta las utilidades con valores aprendidos en episodios
+     anteriores, usando un peso Q_WEIGHT = 0.5 sobre la utilidad calculada.
+  3. La política ε-greedy decide si explotar la mejor acción conocida (con
+     probabilidad 1−ε) o explorar una alternativa aleatoria (con probabilidad ε).
+
+8.2 Función de utilidad compuesta
+------------------------------------
+La evaluación de una acción candidata a integra:
+
+  U_total(a) = U_base(a) + Q_WEIGHT × Q(s, categoría(a))
+
+  Componentes de U_base:
+
+    Para rescatar víctima v:
+      U = w_victim − |camino|×w_step − riesgo_esperado×w_danger
+
+    Para recargar en estación s:
+      U = (1 − energía/maxEnergía)³ × w_recharge_low / distancia(s)
+
+    Para explorar celda c:
+      U = w_explore × (1 − celdas_conocidas / total_celdas) / distancia(c)
+
+  Con pesos (DEFAULTS.rewardWeights):
+    w_victim = 100, w_step = -1, w_danger = -5, w_recharge_low = 20,
+    w_explore = 5.
+
+8.3 Criterio de racionalidad
+-------------------------------
+El agente selecciona la acción que maximiza U_total entre todas las acciones
+evaluadas. Esto lo convierte en un agente racional con respecto a su función
+de utilidad, priorizando rescates cuando existen víctimas conocidas,
+recargando cuando la energía es crítica y explorando cuando no hay objetivos
+claros.
+
+
+================================================================================
+9. APRENDIZAJE AUTOMÁTICO — Q-LEARNING
+================================================================================
+
+9.1 Formulación del problema de aprendizaje
+----------------------------------------------
+El aprendizaje se modela como un problema de Aprendizaje por Refuerzo (RL)
+donde el agente aprende una política de selección de objetivos de alto nivel.
+
+9.2 Espacio de estados discretizados
+---------------------------------------
+Para mantener la tabla Q manejable, el estado se discretiza en 18 estados
+posibles mediante tres variables:
+
+  hasVictim  ∈ {0, 1}     : ¿conoce víctimas en la KB?
+  energyBucket ∈ {0,1,2}  : bajo (<30%), medio (30-70%), alto (>70%)
+  explorationBucket ∈ {0,1,2}: poco (<33%), medio (33-66%), mucho (>66%)
+
+  Estado: "hasVictim_energyBucket_explorationBucket"
+  Ejemplo: "1_2_1" → hay víctimas, energía alta, mapa medio explorado.
+
+9.3 Acciones de alto nivel
+-----------------------------
+  QAction ∈ { 'rescue', 'explore', 'recharge' }
+
+Estas acciones corresponden a los objetivos que el planificador puede perseguir,
+no a movimientos individuales.
+
+9.4 Función de recompensa
+---------------------------
+  +100  por rescatar una víctima (w_victim).
+  − 50  por morir sin energía o HP (w_death).
+  −  1  por paso (incentiva eficiencia) (w_step).
+  −  5  por pisar una celda de peligro (w_danger).
+  −  2  por punto de HP perdido (w_hpLoss).
+  + 20  por recargar con energía < 30 % (w_rechargeLow).
+  − 10  por intentar una acción inválida (w_invalid).
+  +  5  por explorar una celda nueva (decrece con la fracción explorada).
+
+9.5 Algoritmo de actualización (Bellman)
+------------------------------------------
+  Q(s, a) ← Q(s, a) + α · [r + γ · max_a' Q(s', a') − Q(s, a)]
+
+  Parámetros:
+    α (alpha)   = 0.1   : tasa de aprendizaje (decae × 0.999 por episodio).
+    γ (gamma)   = 0.9   : factor de descuento (preferencia por recompensas
+                          inmediatas vs. futuras).
+    ε (epsilon) = 0.3   : probabilidad de exploración (decae × 0.995 por
+                          episodio hasta mínimo 0.01).
+    α mínimo    = 0.01  : tasa de aprendizaje mínima garantizada.
+
+9.6 Entrenamiento acelerado (Turbo Training)
+----------------------------------------------
+El sistema permite entrenar el agente en modo headless (sin renderizado) en
+100, 500 o 2 000 episodios consecutivos. El conocimiento acumulado
+(knownCells, beliefs, Q-table, ε, α) se transfiere directamente al agente en
+vivo al finalizar el entrenamiento, garantizando coherencia entre el estado
+entrenado y el estado de simulación visible.
+
+El turbo training está disponible para ambos algoritmos (A* y BFS) y preserva
+el conocimiento entre episodios headless de la misma forma que los episodios
+en vivo.
+
+9.7 Evidencia del aprendizaje
+--------------------------------
+La pestaña de Aprendizaje muestra gráficas Recharts con evolución por episodio:
+  - Recompensa acumulada por episodio.
+  - Víctimas rescatadas por episodio.
+  - Pasos por episodio (eficiencia).
+  - Valor de ε (exploración) a lo largo del tiempo.
+  - Tabla Q: calor de los 18 estados × 3 acciones.
+
+La convergencia de la política se evidencia en la reducción del valor de ε y
+la estabilización de las recompensas promedio tras múltiples episodios.
+
+
+================================================================================
+10. IMPLEMENTACIÓN
+================================================================================
+
+10.1 Lenguaje y plataforma
+----------------------------
+  - Lenguaje:     TypeScript 5 (strict: true).
+  - Framework:    Next.js 16 con App Router (src/ directory).
+  - Plataforma:   Aplicación web ejecutable en navegador.
+
+10.2 Arquitectura de módulos
+------------------------------
+  src/lib/
+  ├── agent/           Ciclo principal del agente (loop.ts), memoria (memory.ts)
+  ├── search/          A* (astar.ts), BFS (bfs.ts), comparativa (compare.ts)
+  ├── knowledge/       KB (kb.ts), predicados (predicates.ts), inferencia (inference.ts)
+  ├── planning/        STRIPS (strips.ts), replanificación (replan.ts)
+  ├── uncertainty/     Actualización bayesiana (bayes.ts)
+  ├── utility/         Función de utilidad (utility.ts)
+  ├── learning/        Q-Learning (qlearning.ts)
+  ├── environment/     Modelo del mundo, dinamismo, sensores
+  ├── canvas/          Renderizado Canvas 2D nativo (draw.ts)
+  ├── procedural/      Generación aleatoria de mapas
+  └── persistence/     Guardado/carga en localStorage
+
+10.3 Gestión de estado
+------------------------
+  - Zustand: stores reactivos para mundo (worldStore), agente (agentStore),
+    aprendizaje (learningStore) e interfaz (uiStore).
+  - Simulación dual: los stores se instancian con factories para permitir
+    ejecución paralela de los agentes A* y BFS.
+  - Persistencia: localStorage para mapas guardados y Q-tables entre sesiones.
+
+10.4 Interfaz de usuario
+--------------------------
+  - Paleta visual "blueprint" (azul técnico sobre fondo oscuro).
+  - Panel de cuadrícula: Canvas 2D con renderizado en tiempo real.
+  - Panel cognitivo (BrainPanel): estado interno, KB, plan activo, creencias.
+  - Panel de aprendizaje: gráficas Recharts de métricas por episodio.
+  - Comparativa A* vs BFS: pantalla dedicada con dos Canvas sincronizados.
+  - Editor de mapas: herramienta de diseño con biblioteca de escenarios.
+  - Control de velocidad: slider de 1× a 10×, modo paso a paso, turbo training.
+
+
+================================================================================
+11. RESULTADOS OBTENIDOS
+================================================================================
+
+11.1 Comportamiento del agente
+--------------------------------
+El agente SARA demuestra las siguientes capacidades en la simulación:
+
+  a) Exploración sistemática: cuando no conoce víctimas, el agente se dirige
+     a las celdas más cercanas no exploradas, construyendo un WorldModel
+     progresivo del entorno.
+
+  b) Rescate multi-objetivo: localiza y rescata múltiples víctimas por episodio
+     seleccionando en cada momento la más cercana según la KB actualizada.
+
+  c) Gestión de energía: anticipa la necesidad de recarga gracias a la función
+     de urgencia cúbica, evitando quedar inmovilizado por falta de energía.
+
+  d) Evasión de peligros: A* genera caminos que rodean las zonas de alto
+     riesgo según las creencias bayesianas, minimizando el daño esperado.
+
+  e) Adaptación al dinamismo: cuando el entorno cambia (nuevos peligros,
+     víctimas desplazadas), el agente detecta la invalidez de su plan y
+     replanifica automáticamente.
+
+11.2 Comparación A* vs BFS
+----------------------------
+En escenarios con zonas de peligro, A* consistentemente produce:
+  - Mayor supervivencia del agente (menos daño acumulado por episodio).
+  - Mejor aprovechamiento de la energía.
+  - Ligero incremento en la longitud del camino (en número de pasos).
+BFS produce el camino óptimo en pasos pero ignora el riesgo, resultando en
+mayor daño y más muertes del agente.
+
+11.3 Evidencia de aprendizaje
+--------------------------------
+Tras el entrenamiento turbo:
+  - El valor de ε decae de 0.30 hasta valores cercanos a 0.01, indicando
+    que el agente ha convergido hacia una política explotar en lugar de explorar.
+  - La recompensa promedio por episodio aumenta con el número de episodios
+    entrenados.
+  - La tabla Q converge hacia valores altos en Q(hasVictim=1, *, *) → 'rescue',
+    confirmando que el agente aprende correctamente a priorizar el rescate
+    cuando hay víctimas conocidas.
+
+
+================================================================================
+12. ANÁLISIS DE DESEMPEÑO
+================================================================================
+
+12.1 Efectividad del agente
+-----------------------------
+  - Tasa de éxito: el agente rescata todas las víctimas disponibles en la
+    mayoría de episodios cuando el mapa es factible (no hay víctimas
+    completamente rodeadas de obstáculos).
+  - Supervivencia: con el turbo training completo (2 000 episodios), el agente
+    mejora su tasa de supervivencia al aprender a recargar oportunamente.
+
+12.2 Eficiencia de búsqueda
+-----------------------------
+  - A* expande significativamente menos nodos que BFS en mapas de tamaño 12×12,
+    especialmente cuando hay zonas de peligro que la heurística de riesgo
+    permite anticipar.
+  - BFS garantiza el camino mínimo en pasos, lo que es ventajoso en mapas
+    sin zonas de peligro relevantes.
+
+12.3 Precisión del modelo de creencias
+----------------------------------------
+  - Las creencias bayesianas convergen hacia valores cercanos a 0 en zonas
+    seguras y cercanos a 1 en zonas de peligro confirmado tras las primeras
+    observaciones del área.
+  - El ruido de sensores (FP 5%, FN 10% para brisa) introduce incertidumbre
+    persistente en zonas alejadas del agente, lo que motiva la exploración
+    activa para reducirla.
+
+12.4 Integración de componentes
+---------------------------------
+Los siete módulos de IA se integran en un ciclo coherente:
+
+  Percepción → KB + Bayesian Update → Función de Utilidad + Q-Learning
+  → Selección de objetivo → STRIPS Planner (A* / BFS)
+  → Ejecución paso a paso → Recompensa → Q Update → (siguiente paso)
+
+Esta integración cumple los requisitos académicos de la rúbrica del proyecto
+final al demostrar comportamiento racional, mejora mediante aprendizaje y
+manejo explícito de incertidumbre en un entorno dinámico e incierto.
+
+
+================================================================================
+13. INTEGRACIÓN DE CONCEPTOS DEL CURSO
+================================================================================
+
+  Concepto del curso          Implementación en SARA
+  ──────────────────────────────────────────────────────────────────────────
+  Agentes inteligentes        Agente basado en modelo con ciclo percepción-
+                              acción autónomo
+  Búsqueda no informada       BFS para planificación sin heurística
+  Búsqueda informada          A* con heurística Manhattan + riesgo bayesiano
+  Lógica proposicional        KB con predicados VictimAt, Safe, ConfirmedDanger
+  Planificación STRIPS        Acciones con precondiciones/efectos, secuencias
+                              multi-paso
+  Probabilidad e              Actualización bayesiana de creencias sobre
+  incertidumbre               peligros con sensores ruidosos
+  Toma de decisiones          Función de utilidad multi-criterio (ε-greedy)
+  Aprendizaje automático      Q-Learning con tabla de 18 estados × 3 acciones
+  ──────────────────────────────────────────────────────────────────────────
+
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================
